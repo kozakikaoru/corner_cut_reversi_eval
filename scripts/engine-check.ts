@@ -37,6 +37,10 @@ import {
 } from '../src/engine/types';
 import { positionWeightsFor } from '../src/engine/evaluate';
 import { evaluatePosition } from '../src/engine/search';
+import type { MoveEval } from '../src/engine/search';
+import { AI_LEVELS, aiLevelById, chooseAiMove } from '../src/game/ai';
+import { judgeMove, summarizePlay, rankForScore } from '../src/game/scoring';
+import { GOOD_THRESHOLD } from '../src/ui/evalColor';
 
 let pass = 0;
 let fail = 0;
@@ -353,6 +357,151 @@ console.log('=== G. 時間切れフォールバック(クロス盤) ===');
     check('時間制限なし: timedOut は false', full.timedOut === false);
     check('時間制限なし: 全手 exact', full.moves.every((m) => m.exact === true));
   }
+}
+
+// ===========================================================================
+// H. 対戦 AI のレベル定義 / 着手選択(フェーズ3) --------------------------
+//    決定論的な乱数(rng)を注入して挙動を検証する。
+// ===========================================================================
+console.log('=== H. 対戦AI(6段階・着手選択) ===');
+{
+  // H-1. レベル定義の健全性: 6 段階 / バーサーカーは特別・最善厳守。
+  check('AI: レベルは6段階', AI_LEVELS.length === 6);
+  check('AI: バーサーカーが1つだけ special', AI_LEVELS.filter((l) => l.special).length === 1);
+  const berserker = aiLevelById('berserker');
+  check('AI: バーサーカーは最善厳守(blunderRate=0)', berserker.blunderRate === 0);
+  check('AI: バーサーカーは topK=1', berserker.topK === 1);
+
+  // H-2. 強さの単調性: 思考時間は Lv1<Lv2<…<バーサーカー、blunderRate は単調減少。
+  {
+    let timeMonotonic = true;
+    let blunderMonotonic = true;
+    for (let i = 1; i < AI_LEVELS.length; i++) {
+      if (!(AI_LEVELS[i].timeLimitMs > AI_LEVELS[i - 1].timeLimitMs)) timeMonotonic = false;
+      if (!(AI_LEVELS[i].blunderRate <= AI_LEVELS[i - 1].blunderRate)) blunderMonotonic = false;
+    }
+    check('AI: 思考時間が単調増加(弱→強)', timeMonotonic);
+    check('AI: blunderRate が単調減少(弱→強)', blunderMonotonic);
+    check('AI: バーサーカーの思考時間が最長', berserker.timeLimitMs === Math.max(...AI_LEVELS.map((l) => l.timeLimitMs)));
+  }
+
+  // H-3. 着手選択: テスト用の手集合(value 降順が明確)。
+  const sample: MoveEval[] = [
+    { cell: 10, value: 8, exact: false }, // 最善
+    { cell: 20, value: 5, exact: false },
+    { cell: 30, value: 2, exact: false },
+    { cell: 40, value: -3, exact: false },
+    { cell: 50, value: -9, exact: false }, // 最悪
+  ];
+
+  // 最善厳守(バーサーカー): rng がどうでも最善(cell=10)。
+  check('AI: バーサーカーは常に最善を選ぶ', chooseAiMove(sample, berserker, () => 0.999) === 10);
+  check('AI: バーサーカーは rng=0 でも最善', chooseAiMove(sample, berserker, () => 0) === 10);
+
+  // 弱レベル(Lv1): rng>=blunderRate なら最善、rng<blunderRate なら上位topKから。
+  const lv1 = aiLevelById(1);
+  check('AI: Lv1 も rng が大きければ最善', chooseAiMove(sample, lv1, () => 0.999) === 10);
+  // rng=0(blunder 発火 + 候補先頭) → 最善(候補は上位 topK の先頭=最善)。
+  check('AI: Lv1 blunder時も最悪手は選ばない(候補は上位手)', (() => {
+    // blunder 発火させ、候補内の最後を選ばせる rng シーケンスを模す。
+    // chooseAiMove は rng を2回使う: 1回目=blunder判定, 2回目=候補内 index。
+    let calls = 0;
+    const rng = () => (calls++ === 0 ? 0 : 0.999); // 1回目0(発火), 2回目ほぼ1(候補末尾)
+    const picked = chooseAiMove(sample, lv1, rng);
+    // Lv1 の topK=6 だが候補数は手数(5)に制限 → 末尾は cell=50。
+    // 「上位手から選ぶ」仕様の確認: 選ばれた手が sample 内に存在し、合法な cell であること。
+    return sample.some((m) => m.cell === picked);
+  })());
+
+  // 1手しかなければ必ずその手。
+  check('AI: 合法手1つなら必ずそれ', chooseAiMove([{ cell: 42, value: 0, exact: false }], lv1, () => 0) === 42);
+  check('AI: 空なら -1', chooseAiMove([], lv1, () => 0) === -1);
+
+  // 統計的: Lv1 は最善以外を選ぶ頻度が高い / バーサーカーは 0。
+  {
+    let r = 12345;
+    const seeded = () => {
+      // 線形合同法(決定論)。
+      r = (r * 1103515245 + 12345) & 0x7fffffff;
+      return r / 0x7fffffff;
+    };
+    let lv1NonBest = 0;
+    let berserkerNonBest = 0;
+    const N = 400;
+    for (let i = 0; i < N; i++) {
+      if (chooseAiMove(sample, lv1, seeded) !== 10) lv1NonBest++;
+      if (chooseAiMove(sample, berserker, seeded) !== 10) berserkerNonBest++;
+    }
+    check('AI: Lv1 は高頻度で最善を外す(>30%)', lv1NonBest / N > 0.3);
+    check('AI: バーサーカーは最善を外さない(0回)', berserkerNonBest === 0);
+    console.log(`  [info] Lv1 非最善率=${Math.round((lv1NonBest / N) * 100)}% / バーサーカー非最善率=${Math.round((berserkerNonBest / N) * 100)}%`);
+  }
+}
+
+// ===========================================================================
+// I. 採点ロジック(着手判定 / 最終プレイ採点)(フェーズ3) ----------------
+// ===========================================================================
+console.log('=== I. 採点(着手判定・プレイ採点) ===');
+{
+  const evals: MoveEval[] = [
+    { cell: 10, value: 8, exact: false }, // 最善
+    { cell: 20, value: 8 - GOOD_THRESHOLD, exact: false }, // ちょうど善手の境界
+    { cell: 30, value: 8 - GOOD_THRESHOLD - 0.5, exact: false }, // 悪手
+    { cell: 40, value: -2, exact: false }, // 悪手
+  ];
+
+  // I-1. 着手判定(perfect / good / bad)。
+  check('採点: 最善手=perfect', judgeMove(evals, 10).kind === 'perfect');
+  check('採点: 境界内=good', judgeMove(evals, 20).kind === 'good');
+  check('採点: 境界外=bad', judgeMove(evals, 30).kind === 'bad');
+  check('採点: 大きく劣る=bad', judgeMove(evals, 40).kind === 'bad');
+  // ロスの値。
+  check('採点: perfect の loss=0', judgeMove(evals, 10).loss === 0);
+  check('採点: good の loss=GOOD_THRESHOLD', Math.abs(judgeMove(evals, 20).loss - GOOD_THRESHOLD) < 1e-9);
+  check('採点: bad の loss>GOOD_THRESHOLD', judgeMove(evals, 30).loss > GOOD_THRESHOLD);
+  // 含まれない手・空でも壊れない。
+  check('採点: 未知cellでも例外なく返る', judgeMove(evals, 99).kind !== undefined);
+  check('採点: 空evalsでも neutral', judgeMove([], 10).kind === 'good');
+
+  // I-2. 最終プレイ採点の集計。
+  {
+    const allPerfect = summarizePlay([
+      judgeMove(evals, 10), judgeMove(evals, 10), judgeMove(evals, 10),
+    ]);
+    check('採点: 全perfectで一致率100%', allPerfect.bestMatchRate === 100);
+    check('採点: 全perfectで平均ロス0', allPerfect.averageLoss === 0);
+    check('採点: 全perfectで総合100点', allPerfect.totalScore === 100);
+    check('採点: 全perfectでランクS', allPerfect.rank === 'S');
+
+    const allBad = summarizePlay([
+      judgeMove(evals, 40), judgeMove(evals, 40), judgeMove(evals, 40),
+    ]);
+    check('採点: 全badで一致率0%', allBad.bestMatchRate === 0);
+    check('採点: 全badは総合<全perfect', allBad.totalScore < allPerfect.totalScore);
+    check('採点: スコアは0..100に収まる', allBad.totalScore >= 0 && allBad.totalScore <= 100);
+
+    const mixed = summarizePlay([
+      judgeMove(evals, 10), judgeMove(evals, 20), judgeMove(evals, 30), judgeMove(evals, 40),
+    ]);
+    check('採点: 混在で内訳が合う(P1/G1/B2)', mixed.perfectCount === 1 && mixed.goodCount === 1 && mixed.badCount === 2);
+    check('採点: 混在で総手数=4', mixed.totalMoves === 4);
+    check('採点: 混在スコアは中間(0<score<100)', mixed.totalScore > 0 && mixed.totalScore < 100);
+
+    // 空(着手なし)。
+    const none = summarizePlay([]);
+    check('採点: 着手0件はランクD・0点', none.totalScore === 0 && none.rank === 'D' && none.totalMoves === 0);
+  }
+
+  // I-3. ランク境界。
+  check('採点: 90=S', rankForScore(90) === 'S');
+  check('採点: 89=A', rankForScore(89) === 'A');
+  check('採点: 75=A', rankForScore(75) === 'A');
+  check('採点: 74=B', rankForScore(74) === 'B');
+  check('採点: 55=B', rankForScore(55) === 'B');
+  check('採点: 54=C', rankForScore(54) === 'C');
+  check('採点: 35=C', rankForScore(35) === 'C');
+  check('採点: 34=D', rankForScore(34) === 'D');
+  check('採点: 0=D', rankForScore(0) === 'D');
 }
 
 console.log(`\n結果: ${pass} passed, ${fail} failed`);

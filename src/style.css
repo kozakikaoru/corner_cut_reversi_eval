@@ -434,9 +434,484 @@ html, body {
   display: none;
 }
 
+/* ================================================================== *
+ * フェーズ3: メニュー / 対戦モード(設定・対局・結果)
+ * 既存トークン(案B ネオンダーク)をそのまま使う。発光は使わない方針も踏襲。
+ * ================================================================== */
+
+/* ---- 画面共通: 上部バー(戻る + タイトル) ---- */
+.screen-topbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+}
+/* タイトルは中央。戻るボタンは左、右は空きで対称。 */
+.screen-topbar .app-title {
+  grid-column: 2;
+}
+.screen-topbar .btn-back {
+  grid-column: 1;
+  justify-self: start;
+  padding: 8px 12px;
+}
+
+/* ---- メニュー画面 ---- */
+.menu-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  padding-top: 6vh;
+}
+.menu-header {
+  text-align: center;
+}
+.menu-title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+.menu-subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.menu-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.menu-card {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid #21303a;
+  border-radius: 14px;
+  padding: 22px 22px;
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.06s ease;
+}
+.menu-card:hover {
+  border-color: var(--accent);
+  background: rgba(95, 210, 192, 0.06);
+}
+.menu-card:active {
+  transform: translateY(1px);
+}
+.menu-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.menu-card-icon {
+  flex-shrink: 0;
+  width: 54px;
+  height: 54px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid #2a3a44;
+}
+.menu-card-versus .menu-card-icon { color: var(--best-ring); }
+.menu-card-eval .menu-card-icon { color: var(--accent); }
+.menu-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.menu-card-title {
+  font-size: 19px;
+  font-weight: 700;
+}
+.menu-card-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* ---- 対戦前設定 ---- */
+.versus-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.setup-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.setup-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 0;
+}
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.choice-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid #2a3a44;
+  border-radius: 11px;
+  padding: 13px 15px;
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.06s ease;
+}
+.choice-btn:hover:not(.selected) {
+  border-color: var(--accent);
+  background: rgba(95, 210, 192, 0.06);
+}
+.choice-btn:active { transform: translateY(1px); }
+.choice-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* 選択中: アクセントの塗り枠。 */
+.choice-btn.selected {
+  border-color: var(--accent);
+  background: rgba(95, 210, 192, 0.12);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.choice-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+.choice-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* バーサーカー(特別感): アンバー基調で目立たせる。 */
+.choice-btn.berserker .choice-title { color: var(--best-ring); }
+.choice-btn.berserker {
+  border-color: rgba(255, 176, 32, 0.5);
+  background:
+    linear-gradient(135deg, rgba(255, 176, 32, 0.10), rgba(194, 97, 90, 0.08));
+}
+.choice-btn.berserker:hover:not(.selected) {
+  border-color: var(--best-ring);
+  background: linear-gradient(135deg, rgba(255, 176, 32, 0.16), rgba(194, 97, 90, 0.12));
+}
+.choice-btn.berserker.selected {
+  border-color: var(--best-ring);
+  box-shadow: inset 0 0 0 1px var(--best-ring);
+  background: linear-gradient(135deg, rgba(255, 176, 32, 0.20), rgba(194, 97, 90, 0.14));
+}
+
+.setup-start {
+  margin-top: 6px;
+  display: flex;
+  justify-content: center;
+}
+
+/* プライマリボタン(対局開始 / もう1戦) */
+.primary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 13px 30px;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #04201b;
+  cursor: pointer;
+  transition: filter 0.12s ease, transform 0.06s ease;
+}
+.primary-btn:hover { filter: brightness(1.08); }
+.primary-btn:active { transform: translateY(1px); }
+.primary-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.primary-btn .ctrl-icon,
+.primary-btn .menu-icon { width: 20px; height: 20px; }
+
+.ghost-btn {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 12px 22px;
+  border-radius: 11px;
+  border: 1px solid #2a3a44;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.06s ease;
+}
+.ghost-btn:hover {
+  border-color: var(--accent);
+  background: rgba(95, 210, 192, 0.08);
+}
+.ghost-btn:active { transform: translateY(1px); }
+.ghost-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- 対局画面 ---- */
+.versus-game {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.versus-topbar { grid-template-columns: auto 1fr; }
+.versus-topbar .btn-back { grid-column: 1; }
+.versus-info {
+  grid-column: 2;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.versus-info .vs-ai { color: var(--text); font-weight: 600; }
+.versus-info .vs-ai.berserker { color: var(--best-ring); font-weight: 700; }
+.versus-info .vs-board { color: var(--text); }
+.versus-info .vs-sep { opacity: 0.5; }
+.versus-info .vs-you { display: inline-flex; align-items: center; gap: 5px; }
+.versus-info .disc { width: 13px; height: 13px; }
+
+/* 手番バナー(固定高でレイアウトシフト防止) */
+.turn-banner {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid #21303a;
+  background: var(--panel);
+}
+.turn-banner.banner-you {
+  color: var(--accent);
+  border-color: rgba(95, 210, 192, 0.4);
+}
+.turn-banner.banner-ai-thinking {
+  color: var(--best-ring);
+  border-color: rgba(255, 176, 32, 0.35);
+}
+.your-turn-text { animation: youTurnPulse 1.8s ease-in-out infinite; }
+@keyframes youTurnPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.thinking-text { margin-right: 2px; }
+/* AI思考中の「…」ドットアニメ(固まり感の緩和) */
+.thinking-dots {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  margin-left: 2px;
+  margin-bottom: 1px;
+}
+.thinking-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+  opacity: 0.25;
+  animation: thinkingDot 1.2s infinite ease-in-out;
+}
+.thinking-dots i:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes thinkingDot {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+
+/* スコアバーの「あなた/AI」ラベル */
+.score-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-left: 6px;
+  letter-spacing: 0.04em;
+}
+
+/* 着手判定フィードバック(固定高でレイアウトシフト防止) */
+.judge-feedback {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.judge-feedback.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.judge-feedback.judge-perfect { color: var(--best-ring); }
+.judge-feedback.judge-good { color: var(--good-ring); }
+.judge-feedback.judge-bad { color: var(--bad-ring); }
+
+/* 評価値表示トグル(アクティブ時はアクセント) */
+.btn-eval-toggle.active {
+  border-color: var(--accent);
+  color: #ffffff;
+  background: rgba(95, 210, 192, 0.14);
+}
+
+/* ---- 結果画面 ---- */
+.versus-result {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-top: 3vh;
+}
+.result-header {
+  text-align: center;
+  padding: 22px 18px;
+  border-radius: 14px;
+  border: 1px solid #21303a;
+  background: var(--panel);
+}
+.result-headline {
+  font-size: 26px;
+  font-weight: 800;
+  margin-bottom: 12px;
+}
+.result-win .result-headline { color: var(--good-ring); }
+.result-lose .result-headline { color: var(--bad-ring); }
+.result-draw .result-headline { color: var(--text-dim); }
+.result-win { border-color: rgba(63, 191, 159, 0.4); }
+.result-lose { border-color: rgba(194, 97, 90, 0.4); }
+.result-score {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  font-size: 22px;
+  font-weight: 700;
+}
+.result-score .disc { width: 18px; height: 18px; }
+.result-score .rs-you,
+.result-score .rs-ai { display: inline-flex; align-items: center; gap: 8px; }
+.result-score .rs-sep { opacity: 0.5; }
+
+/* プレイ採点カード */
+.play-score-card {
+  background: var(--panel);
+  border: 1px solid #21303a;
+  border-radius: 14px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.ps-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ps-empty { color: var(--text-dim); font-size: 14px; }
+.ps-big {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.ps-rank {
+  font-size: 52px;
+  font-weight: 900;
+  line-height: 1;
+  width: 76px;
+  height: 76px;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.28);
+  border: 2px solid #2a3a44;
+}
+.ps-rank-S { color: var(--best-ring); border-color: var(--best-ring); }
+.ps-rank-A { color: var(--good-ring); border-color: var(--good-ring); }
+.ps-rank-B { color: var(--accent); border-color: rgba(95, 210, 192, 0.6); }
+.ps-rank-C { color: var(--text); }
+.ps-rank-D { color: var(--bad-ring); border-color: rgba(194, 97, 90, 0.6); }
+.ps-total {
+  font-size: 20px;
+  color: var(--text-dim);
+}
+.ps-total strong {
+  font-size: 40px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.ps-total-max { font-size: 18px; }
+
+.ps-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ps-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 2px;
+  border-top: 1px solid #21303a;
+}
+.ps-row:first-child { border-top: 0; }
+.ps-label { font-size: 14px; color: var(--text-dim); }
+.ps-value { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ps-value .tag {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: 6px;
+}
+.tag-perfect { color: var(--best-ring); background: rgba(255, 176, 32, 0.12); }
+.tag-good { color: var(--good-ring); background: rgba(63, 191, 159, 0.12); }
+.tag-bad { color: var(--bad-ring); background: rgba(194, 97, 90, 0.12); }
+
+.result-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+.result-actions .primary-btn,
+.result-actions .ghost-btn { width: 100%; }
+
 /* アクセシビリティ: アニメ抑制設定を尊重 */
 @media (prefers-reduced-motion: reduce) {
   .cell.eval-best::before {
     animation: none;
   }
+  .your-turn-text,
+  .thinking-dots i {
+    animation: none;
+  }
+  .thinking-dots i { opacity: 0.7; }
 }
