@@ -27,7 +27,22 @@ export interface EvalResponse {
   reachedDepth: number;
   nodes: number;
   elapsedMs: number;
+  /**
+   * 思考時間上限に達して探索を打ち切ったか。
+   * true のとき moves は「その時点で得られた最善の結果」(終盤なら完全読みではない)。
+   */
+  timedOut: boolean;
+}
+
+/**
+ * Worker → メイン: 評価中に想定外の例外が発生した。
+ * UI が「評価中…」のまま固まらないよう、必ずこの応答を返してハングを防ぐ。
+ */
+export interface EvalErrorResponse {
+  type: 'error';
+  reqId: number;
+  message: string;
 }
 
 export type WorkerInbound = EvalRequest;
-export type WorkerOutbound = EvalResponse;
+export type WorkerOutbound = EvalResponse | EvalErrorResponse;

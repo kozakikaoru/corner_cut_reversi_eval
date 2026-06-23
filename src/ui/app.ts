@@ -7,7 +7,7 @@ import { type Player, BLACK, WHITE } from '../engine/types';
 import { GameState } from '../game/gameState';
 import { BoardView } from './boardView';
 import type { MoveEval } from '../engine/search';
-import type { EvalRequest, EvalResponse } from '../worker/protocol';
+import type { EvalRequest, WorkerOutbound } from '../worker/protocol';
 
 export class App {
   private container: HTMLElement;
@@ -33,7 +33,16 @@ export class App {
     this.worker = new Worker(new URL('../worker/eval.worker.ts', import.meta.url), {
       type: 'module',
     });
-    this.worker.onmessage = (e: MessageEvent<EvalResponse>) => this.onWorkerResult(e.data);
+    this.worker.onmessage = (e: MessageEvent<WorkerOutbound>) => this.onWorkerResult(e.data);
+    // Worker が異常終了 / メッセージ復元失敗した場合の最終防衛線。
+    // ここで「評価中…」を解除しないと UI が永久に固まってしまう。
+    this.worker.onerror = (e: ErrorEvent) => {
+      e.preventDefault();
+      this.onWorkerFailure('評価ワーカーでエラーが発生しました');
+    };
+    this.worker.onmessageerror = () => {
+      this.onWorkerFailure('評価結果の受信に失敗しました');
+    };
     this.renderSelectScreen();
   }
 
@@ -170,20 +179,45 @@ export class App {
     this.worker.postMessage(req);
   }
 
-  private onWorkerResult(res: EvalResponse): void {
-    if (res.type !== 'result') return;
-    // 古いリクエストの結果は無視。
+  private onWorkerResult(res: WorkerOutbound): void {
+    // 古いリクエストの結果は無視(result / error 共通)。
     if (res.reqId !== this.reqId) return;
+
+    // 想定外例外: Worker から error 応答。UI を必ず復帰させる。
+    if (res.type === 'error') {
+      this.currentEvals = null;
+      this.draw();
+      this.updateEngineInfo(`⚠️ 評価エラー(${res.message})`);
+      return;
+    }
+
+    if (res.type !== 'result') return;
 
     this.currentEvals = res.moves;
     this.draw();
 
-    const modeLabel = res.endgame
-      ? `🏁 終盤完全読み(残り${res.reachedDepth}手)`
-      : `深さ ${res.reachedDepth}`;
+    let modeLabel: string;
+    if (res.timedOut) {
+      // 時間切れ → 完全読みは間に合わず近似値。誤読防止のため明示する。
+      modeLabel = `⏱️ 時間切れ・暫定評価(深さ ${res.reachedDepth})`;
+    } else if (res.endgame) {
+      modeLabel = `🏁 終盤完全読み(残り${res.reachedDepth}手)`;
+    } else {
+      modeLabel = `深さ ${res.reachedDepth}`;
+    }
     this.updateEngineInfo(
       `${modeLabel} / ${res.nodes.toLocaleString()} ノード / ${Math.round(res.elapsedMs)}ms`,
     );
+  }
+
+  /**
+   * Worker の致命的失敗(onerror / onmessageerror)時のフォールバック。
+   * 「評価中…」のまま固まらないようにし、合法手のクリックは引き続き可能にする。
+   */
+  private onWorkerFailure(message: string): void {
+    this.currentEvals = null;
+    this.draw();
+    this.updateEngineInfo(`⚠️ ${message}(評価なしで続行できます)`);
   }
 
   private handleCellClick(cell: number): void {

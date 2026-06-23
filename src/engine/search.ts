@@ -90,6 +90,12 @@ export interface PositionEval {
   nodes: number;
   /** 実測の計算時間(ms)。 */
   elapsedMs: number;
+  /**
+   * 思考時間上限に達して探索を途中で打ち切ったか。
+   * 終盤完全読みが時間内に終わらず、中盤探索へフォールバックした場合も true。
+   * このとき moves は完全読みではない(exact=false / endgame=false 扱い)。
+   */
+  timedOut: boolean;
 }
 
 export interface EvalOptions {
@@ -139,22 +145,45 @@ export function evaluatePosition(
       reachedDepth: 0,
       nodes: ctx.nodes,
       elapsedMs: now() - start,
+      timedOut: false,
     };
   }
 
   let result: MoveEval[];
   let reachedDepth: number;
+  // 終盤完全読みを時間内に終えられたか。時間切れでフォールバックしたら false。
+  let endgameCompleted = isEndgame;
+  let timedOut = false;
 
   if (isEndgame) {
     // --- 終盤完全読み: 残り空き数ぶんの深さで読み切る ---
     // 各手を打った後の局面を相手番から完全読みし、符号反転。
-    result = rootSearchAllMoves(ctx, player, moves, empties /*=full depth*/, true);
-    reachedDepth = empties;
+    // 重い局面や低速端末で deadline を超えると negamax が TimeUp を投げる。
+    // 完全読みの「途中値」は確定石差ではない(exact=true で返すと誤情報)ため、
+    // ここで捕捉し、中盤と同じ反復深化(残り時間で到達できた深さの近似値)へ
+    // フォールバックする。これにより呼び出し側へ必ず結果が返り、UI が固まらない。
+    try {
+      result = rootSearchAllMoves(ctx, player, moves, empties /*=full depth*/, true);
+      reachedDepth = empties;
+    } catch (e) {
+      if (!(e instanceof TimeUp)) throw e;
+      // 完全読みが間に合わなかった → 反復深化の近似値にフォールバック。
+      // tt は完全読み(depth=MAX_SAFE_INTEGER)エントリが混在し depth ゲートを
+      // 乱すため、中盤探索を汚染しないようクリアしてから回す。
+      ctx.tt.clear();
+      endgameCompleted = false;
+      timedOut = true;
+      const id = iterativeDeepening(ctx, player, moves);
+      result = id.moves;
+      reachedDepth = id.depth;
+    }
   } else {
     // --- 中盤: 反復深化。時間内に到達できた最深の結果を採用 ---
     const id = iterativeDeepening(ctx, player, moves);
     result = id.moves;
     reachedDepth = id.depth;
+    // 反復深化が深さ1すら完了できないほど時間が厳しかった場合も時間切れ扱い。
+    timedOut = id.depth === 0;
   }
 
   // value 降順に並べる(最善手が先頭)。
@@ -162,11 +191,13 @@ export function evaluatePosition(
 
   return {
     player,
+    // 完全読みを最後までやり切れた場合のみ endgame(=確定値)とみなす。
+    endgame: endgameCompleted,
     moves: result,
-    endgame: isEndgame,
     reachedDepth,
     nodes: ctx.nodes,
     elapsedMs: now() - start,
+    timedOut,
   };
 }
 

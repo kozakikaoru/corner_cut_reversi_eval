@@ -195,5 +195,64 @@ function check(name: string, cond: boolean): void {
   }
 }
 
+// --- 9. 探索: 終盤完全読みの時間切れフォールバック(QA①の回帰テスト) ----------
+{
+  // 空き<=16 の終盤局面を作り、timeLimitMs を極小化して
+  // 「完全読みが間に合わない」状況を強制する。
+  // 修正前: negamax が投げる TimeUp が evaluatePosition を貫通し、Worker→UI が
+  //         ハングし得た(QAレポート 問題①)。
+  // 修正後: 例外を内部で捕捉し、中盤探索の暫定値へフォールバックして必ず返る。
+  let b = createInitialBoard();
+  let player: 1 | 2 = BLACK;
+  let guard = 0;
+  while (countEmpties(b) > 16 && guard < 300) {
+    guard++;
+    const moves = legalMoves(b, player);
+    if (moves.length === 0) {
+      const opp = player === BLACK ? WHITE : BLACK;
+      if (legalMoves(b, opp).length === 0) break;
+      player = opp;
+      continue;
+    }
+    b = applyMove(b, moves[0], player)!;
+    player = player === BLACK ? WHITE : BLACK;
+  }
+
+  if (!isGameOver(b) && countEmpties(b) <= 16) {
+    console.log(`  [info] 時間切れテスト: 空き${countEmpties(b)}で timeLimitMs=1 を強制`);
+    let threw = false;
+    let r: ReturnType<typeof evaluatePosition> | null = null;
+    try {
+      // 完全読み(endgameEmpties:16)+ 極小 deadline。
+      r = evaluatePosition(b, player, { endgameEmpties: 16, timeLimitMs: 1 });
+    } catch {
+      threw = true;
+    }
+    check('時間切れ: 例外を貫通させず必ず返る(ハング防止)', threw === false && r !== null);
+    if (r) {
+      check('時間切れ: 合法手ぶんの結果が返る', r.moves.length > 0);
+      check('時間切れ: timedOut フラグが立つ', r.timedOut === true);
+      // 完全読みが間に合っていない以上、確定値(exact/endgame)として返してはならない。
+      check('時間切れ: 完全読み(endgame)としては返さない', r.endgame === false);
+      check('時間切れ: 確定値(exact)として返さない', r.moves.every((m) => m.exact === false));
+      check('時間切れ: 全手の評価値が有限', r.moves.every((m) => Number.isFinite(m.value)));
+      console.log(
+        `  [info] フォールバック結果: 深さ${r.reachedDepth}, ${r.nodes}ノード, ${Math.round(r.elapsedMs)}ms`,
+      );
+    }
+  } else {
+    console.log('  [info] 局面準備に失敗したため時間切れテストはスキップ');
+  }
+
+  // 念のため: 同じ局面を時間制限なし(=完全読み)で呼べば従来どおり確定値が返る
+  // (フォールバック追加で通常動作が壊れていないことの確認)。
+  if (!isGameOver(b) && countEmpties(b) <= 16) {
+    const full = evaluatePosition(b, player, { endgameEmpties: 16 });
+    check('時間制限なし: 通常どおり完全読み(endgame=true)', full.endgame === true);
+    check('時間制限なし: timedOut は false', full.timedOut === false);
+    check('時間制限なし: 全手 exact', full.moves.every((m) => m.exact === true));
+  }
+}
+
 console.log(`\n結果: ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
