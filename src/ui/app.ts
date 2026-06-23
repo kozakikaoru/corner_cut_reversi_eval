@@ -38,6 +38,8 @@ export class App {
       this.current = null;
     }
     this.container.innerHTML = '';
+    // 画面遷移時はスクロール位置をリセット(前画面の途中位置が残らないように)。
+    window.scrollTo(0, 0);
 
     switch (screen) {
       case 'menu':

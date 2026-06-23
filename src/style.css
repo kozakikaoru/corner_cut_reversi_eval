@@ -62,7 +62,8 @@ html, body {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: 24px 16px 48px;
+  /* スマホのブラウザ下部バーに被らないよう、下部は safe-area 込みで余白を多めに。 */
+  padding: 24px 16px calc(80px + env(safe-area-inset-bottom));
 }
 
 .screen {
@@ -150,9 +151,11 @@ html, body {
   white-space: nowrap;
 }
 
-.seg-btn:hover:not(.active) {
-  color: var(--text);
-  background: rgba(95, 210, 192, 0.07);
+@media (hover: hover) {
+  .seg-btn:hover:not(.active) {
+    color: var(--text);
+    background: rgba(95, 210, 192, 0.07);
+  }
 }
 
 /* アクティブ: inset 枠ではなく“塗りピル”。角丸が外枠と同心で欠けない。 */
@@ -390,6 +393,7 @@ html, body {
   font-size: 14px;
   font-weight: 600;
   line-height: 1;
+  white-space: nowrap;                /* 「TOP」等が文字単位で折り返さないように */
   padding: 10px 16px;
   border-radius: 10px;
   border: 1px solid #2a3a44;          /* ゴースト枠 */
@@ -405,10 +409,12 @@ html, body {
 }
 
 /* ホバー: アクセント枠 + 極薄塗り(既存方針) */
-.ctrl-btn:hover:not(:disabled) {
-  border-color: var(--accent);        /* #5fd2c0 */
-  color: #ffffff;
-  background: rgba(95, 210, 192, 0.08);
+@media (hover: hover) {
+  .ctrl-btn:hover:not(:disabled) {
+    border-color: var(--accent);        /* #5fd2c0 */
+    color: #ffffff;
+    background: rgba(95, 210, 192, 0.08);
+  }
 }
 
 /* 押下: わずかに沈める */
@@ -418,10 +424,12 @@ html, body {
 }
 
 /* リセットだけ: 破壊的操作のヒントとしてホバー時に警告色へ */
-.ctrl-btn.btn-reset:hover:not(:disabled) {
-  border-color: var(--bad-ring);      /* #c2615a */
-  color: #ffd9d4;
-  background: rgba(194, 97, 90, 0.10);
+@media (hover: hover) {
+  .ctrl-btn.btn-reset:hover:not(:disabled) {
+    border-color: var(--bad-ring);      /* #c2615a */
+    color: #ffd9d4;
+    background: rgba(194, 97, 90, 0.10);
+  }
 }
 
 /* フォーカス可視(キーボード操作・アクセシビリティ) */
@@ -520,9 +528,11 @@ html, body {
   color: var(--text);
   transition: border-color 0.14s ease, background 0.14s ease, transform 0.06s ease;
 }
-.menu-card:hover {
-  border-color: var(--accent);
-  background: rgba(95, 210, 192, 0.06);
+@media (hover: hover) {
+  .menu-card:hover {
+    border-color: var(--accent);
+    background: rgba(95, 210, 192, 0.06);
+  }
 }
 .menu-card:active {
   transform: translateY(1px);
@@ -597,9 +607,11 @@ html, body {
   color: var(--text);
   transition: border-color 0.12s ease, background 0.12s ease, transform 0.06s ease;
 }
-.choice-btn:hover:not(.selected) {
-  border-color: var(--accent);
-  background: rgba(95, 210, 192, 0.06);
+@media (hover: hover) {
+  .choice-btn:hover:not(.selected) {
+    border-color: var(--accent);
+    background: rgba(95, 210, 192, 0.06);
+  }
 }
 .choice-btn:active { transform: translateY(1px); }
 .choice-btn:focus-visible {
@@ -628,9 +640,11 @@ html, body {
   background:
     linear-gradient(135deg, rgba(255, 176, 32, 0.10), rgba(194, 97, 90, 0.08));
 }
-.choice-btn.berserker:hover:not(.selected) {
-  border-color: var(--best-ring);
-  background: linear-gradient(135deg, rgba(255, 176, 32, 0.16), rgba(194, 97, 90, 0.12));
+@media (hover: hover) {
+  .choice-btn.berserker:hover:not(.selected) {
+    border-color: var(--best-ring);
+    background: linear-gradient(135deg, rgba(255, 176, 32, 0.16), rgba(194, 97, 90, 0.12));
+  }
 }
 .choice-btn.berserker.selected {
   border-color: var(--best-ring);
@@ -660,7 +674,9 @@ html, body {
   cursor: pointer;
   transition: filter 0.12s ease, transform 0.06s ease;
 }
-.primary-btn:hover { filter: brightness(1.08); }
+@media (hover: hover) {
+  .primary-btn:hover { filter: brightness(1.08); }
+}
 .primary-btn:active { transform: translateY(1px); }
 .primary-btn:focus-visible {
   outline: 2px solid var(--accent);
@@ -680,9 +696,11 @@ html, body {
   cursor: pointer;
   transition: border-color 0.12s ease, background 0.12s ease, transform 0.06s ease;
 }
-.ghost-btn:hover {
-  border-color: var(--accent);
-  background: rgba(95, 210, 192, 0.08);
+@media (hover: hover) {
+  .ghost-btn:hover {
+    border-color: var(--accent);
+    background: rgba(95, 210, 192, 0.08);
+  }
 }
 .ghost-btn:active { transform: translateY(1px); }
 .ghost-btn:focus-visible {

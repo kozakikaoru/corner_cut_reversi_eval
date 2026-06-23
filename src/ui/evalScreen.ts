@@ -87,7 +87,7 @@ export class EvalScreen {
     const backBtn = document.createElement('button');
     backBtn.className = 'ctrl-btn btn-back';
     backBtn.type = 'button';
-    backBtn.innerHTML = `${ICON_BACK}<span>メニュー</span>`;
+    backBtn.innerHTML = `${ICON_BACK}<span>TOP</span>`;
     backBtn.addEventListener('click', () => this.onBack());
     const title = document.createElement('h1');
     title.className = 'app-title';

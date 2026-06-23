@@ -141,6 +141,7 @@ export class VersusScreen {
 
   private renderSetup(): void {
     this.container.innerHTML = '';
+    window.scrollTo(0, 0);
     const wrap = document.createElement('div');
     wrap.className = 'screen versus-setup';
 
@@ -282,6 +283,8 @@ export class VersusScreen {
   private renderGame(): void {
     if (!this.config) return;
     this.container.innerHTML = '';
+    // 対局開始時はトップへスクロール(設定画面のスクロール位置が残って盤面が見切れないように)。
+    window.scrollTo(0, 0);
     const wrap = document.createElement('div');
     wrap.className = 'screen versus-game';
 
@@ -684,6 +687,7 @@ export class VersusScreen {
     const play = summarizePlay(this.moveScores);
 
     this.container.innerHTML = '';
+    window.scrollTo(0, 0);
     const wrap = document.createElement('div');
     wrap.className = 'screen versus-result';
 
@@ -893,7 +897,7 @@ export class VersusScreen {
     const backBtn = document.createElement('button');
     backBtn.className = 'ctrl-btn btn-back';
     backBtn.type = 'button';
-    backBtn.innerHTML = `${ICON_BACK}<span>メニュー</span>`;
+    backBtn.innerHTML = `${ICON_BACK}<span>TOP</span>`;
     backBtn.addEventListener('click', onBack);
     const title = document.createElement('h1');
     title.className = 'app-title';
