@@ -29,11 +29,13 @@ import {
   BOARD_VARIANTS,
 } from '../engine/types';
 import { GameState } from '../game/gameState';
-import { EvalClient } from '../worker/evalClient';
+import { EvalClient, type EvalResult } from '../worker/evalClient';
 import { AI_LEVELS, type AiLevel, aiLevelById, chooseAiMove } from '../game/ai';
 import {
   judgeMove,
   summarizePlay,
+  pickJudgeSubMessage,
+  JUDGE_PREFIX,
   type MoveScore,
   type MoveJudgeKind,
   type PlayScore,
@@ -85,12 +87,30 @@ export class VersusScreen {
 
   /** 採点: プレイヤーの各手のスコア。 */
   private moveScores: MoveScore[] = [];
+  /** 対局全体の着手数(両者合計の ply 数)。1手目(=0)の判定抑制に使う。 */
+  private plyCount = 0;
+  /**
+   * 進行中の「直近のプレイヤー着手の採点」Promise。
+   * 採点は手番進行と並行で走らせるが、最終手で着手直後に終局した場合は、
+   * 結果集計(summarizePlay)の前にこれを待たないと最後の1手が採点に含まれない。
+   * 終局時のみ advance がこれを await する(通常進行はブロックしない)。
+   */
+  private pendingScore: Promise<void> | null = null;
   /** 評価値表示トグルの状態。 */
   private showEvals = false;
   /** トグル ON 時に保持する現手番の評価結果。 */
   private currentEvals: MoveEval[] | null = null;
   /** UI ロック(AI 思考中・評価待ちはプレイヤー着手を受けない)。 */
   private busy = false;
+
+  // ---- 改善1: 評価値プリフェッチ ----
+  // プレイヤー手番になった時点で、トグルの ON/OFF に関わらず裏で全合法手を評価し、
+  // この Promise にキャッシュしておく。トグル ON で即表示でき、採点にも流用する。
+  // 手番が変わったら破棄(prefetchKey で局面の同一性を判定)。
+  /** プリフェッチ中/完了の評価(局面が変わるまで保持)。null=未起動。 */
+  private prefetchEvals: Promise<EvalResult | null> | null = null;
+  /** プリフェッチ対象の局面キー(盤面文字列+手番+盤種)。一致しなければ流用しない。 */
+  private prefetchKey: string | null = null;
 
   // ---- 対局画面の DOM 参照 ----
   private boardEl: HTMLElement | null = null;
@@ -248,8 +268,12 @@ export class VersusScreen {
     // 先手は黒固定。
     this.game = new GameState(BLACK, this.config.variant);
     this.moveScores = [];
+    this.plyCount = 0;
+    this.pendingScore = null;
     this.showEvals = false;
     this.currentEvals = null;
+    this.prefetchEvals = null;
+    this.prefetchKey = null;
     this.busy = false;
     this.renderGame();
     this.advance();
@@ -334,9 +358,10 @@ export class VersusScreen {
     if (!this.game || !this.config) return;
     const gen = this.generation;
 
-    // パス自動処理。
+    // パス自動処理(パスも 1 ply として数える)。
     const pass = this.game.autoPassIfNeeded();
     if (pass) {
+      this.plyCount++;
       const who = pass.passedPlayer === this.config.playerColor ? 'あなた' : 'AI';
       this.showToast(`${who} は打てる手がないためパスしました ⏭️`);
     }
@@ -345,8 +370,18 @@ export class VersusScreen {
     if (this.game.isOver()) {
       this.busy = false;
       this.currentEvals = null;
+      this.clearPrefetch();
       this.draw();
-      this.showResult();
+      // 最終手の採点が走っていれば、結果集計の前に完了を待つ(最後の1手を取りこぼさない)。
+      const pending = this.pendingScore;
+      if (pending) {
+        const gen = this.generation;
+        void pending.then(() => {
+          if (gen === this.generation) this.showResult();
+        });
+      } else {
+        this.showResult();
+      }
       return;
     }
 
@@ -355,7 +390,10 @@ export class VersusScreen {
       // プレイヤー手番。
       this.busy = false;
       this.setBanner('あなたの番です', 'you');
-      // 評価値表示が ON ならこの手番の評価を取得して表示。
+      // 改善1: トグルの ON/OFF に関わらず、この手番の評価を裏で先読み(プリフェッチ)。
+      // ON で即表示でき、採点にも流用する。
+      this.startPrefetch();
+      // 評価値表示が ON なら(プリフェッチ結果を使って)表示する。
       if (this.showEvals) {
         void this.loadEvalsForDisplay(gen);
       } else {
@@ -366,6 +404,7 @@ export class VersusScreen {
       // AI 手番。
       this.busy = true;
       this.currentEvals = null;
+      this.clearPrefetch();
       this.setBanner('AI思考中', 'ai-thinking');
       this.draw();
       void this.runAiTurn(gen);
@@ -401,7 +440,10 @@ export class VersusScreen {
       cell = legal.length > 0 ? legal[0] : -1;
     }
 
-    if (cell >= 0) this.game.play(cell);
+    if (cell >= 0) {
+      this.game.play(cell);
+      this.plyCount++;
+    }
     this.busy = false;
     this.advance();
   }
@@ -424,20 +466,33 @@ export class VersusScreen {
     if (this.game.getCurrentPlayer() !== this.config.playerColor) return;
 
     // 合法手チェック(BoardView 側でも弾くが二重防御)。
-    if (!this.game.getLegalMoves().includes(cell)) return;
+    const legalBefore = this.game.getLegalMoves();
+    if (!legalBefore.includes(cell)) return;
 
     const gen = this.generation;
     const board = this.game.getBoard();
     const player = this.config.playerColor;
     const variant = this.config.variant;
 
+    // この手が対局全体で何手目か(0 始まり)。1手目(=0)は判定を出さない。
+    const plyIndex = this.plyCount;
+    // 着手前の合法手数(= 選択肢の多さ)。1 個以下なら判定を出さない。
+    const legalCount = legalBefore.length;
+
     // 採点用に「着手前の盤面・色」をコピーで確保(play で変わる前に)。
     const preBoard = board.slice();
+    // プレイヤー手番開始時に走らせたプリフェッチ(同一局面の評価)を採点に流用する。
+    const prefetched = this.takePrefetchFor(preBoard, player, variant);
     // 着手をすぐ反映。
     this.game.play(cell);
+    this.plyCount++;
     this.currentEvals = null;
     // 採点(着手判定)を並行で開始。手番進行はブロックしない。
-    void this.scorePlayerMove(preBoard, player, variant, cell, gen);
+    // 最終手で即終局した場合に集計が取りこぼさないよう Promise を保持しておく
+    // (終局時のみ advance が await する)。
+    this.pendingScore = this.scorePlayerMove(
+      preBoard, player, variant, cell, plyIndex, legalCount, prefetched, gen,
+    );
     // すぐ次の手番へ(AI なら思考演出+応手がここから始まる)。
     this.advance();
   }
@@ -446,25 +501,35 @@ export class VersusScreen {
    * プレイヤーの 1 手を採点(着手前局面の全合法手評価と比較)し、判定を表示する。
    *
    * 手番進行とは独立(busy も advance も触らない)。判定の精度より「すぐ出る」
-   * ことを優先し、短い時間上限で評価する(Perfect/Good/Bad は手の優劣の概略で
-   * 十分。深掘りすると Worker を占有して AI 応手まで遅れる)。
+   * ことを優先する。プレイヤー手番開始時のプリフェッチ(prefetched)があれば
+   * それを使い、Worker への二重リクエストを避ける(プリフェッチは時間上限なしの
+   * 通常評価なので精度も十分)。無ければ短い時間上限で評価する。
+   *
+   * 判定表示(改善4)は「選択の余地がある手」かつ「1手目でない」ときだけ。
+   * ただし採点(moveScores への蓄積)自体は常に行い、強制手の除外は最終集計
+   * (summarizePlay)が legalCount を見て担う。
    */
   private async scorePlayerMove(
     preBoard: Board,
     player: Player,
     variant: VariantId,
     cell: number,
+    plyIndex: number,
+    legalCount: number,
+    prefetched: Promise<EvalResult | null> | null,
     gen: number,
   ): Promise<void> {
-    const result = await this.client
-      .evaluate(preBoard, player, variant, JUDGE_TIME_LIMIT_MS)
-      .catch(() => null);
+    const result = await (prefetched ??
+      this.client.evaluate(preBoard, player, variant, JUDGE_TIME_LIMIT_MS).catch(() => null));
     if (gen !== this.generation || !this.game) return;
 
     if (result && result.moves.length > 0) {
       const score = judgeMove(result.moves, cell);
       this.moveScores.push(score);
-      this.showJudge(score.kind);
+      // 判定バーは「選択の余地あり(合法手2個以上)」かつ「1手目でない」ときだけ表示。
+      if (legalCount >= 2 && plyIndex >= 1) {
+        this.showJudge(score.kind);
+      }
     }
   }
 
@@ -479,6 +544,7 @@ export class VersusScreen {
     // プレイヤー手番のときだけ表示(AI 手番はバナー優先・盤は触れない)。
     if (!this.showEvals) {
       this.currentEvals = null;
+      this.setEvalPending(false); // 計算中表示を消す。
       this.draw();
       return;
     }
@@ -491,18 +557,105 @@ export class VersusScreen {
     }
   }
 
-  /** 現手番の全合法手評価を取得して盤に表示する。 */
+  /**
+   * 現手番の全合法手評価を盤に表示する(改善1)。
+   *
+   * プレイヤー手番開始時のプリフェッチ結果を再利用する。完了済みなら即時表示
+   * (ラグなし)。計算中なら「計算中…」を出し、完了次第そのまま表示する。
+   * プリフェッチが無い/別局面なら念のため新規に起動して待つ。
+   */
   private async loadEvalsForDisplay(gen: number): Promise<void> {
+    if (!this.game || !this.config) return;
+    const player = this.game.getCurrentPlayer();
+
+    // プリフェッチが現局面と一致していなければ起動(通常は advance で起動済み)。
+    const key = this.positionKey(this.game.getBoard(), player, this.config.variant);
+    if (this.prefetchKey !== key || !this.prefetchEvals) {
+      this.startPrefetch();
+    }
+    const promise = this.prefetchEvals;
+
+    // 結果待ちの間は「計算中…」を表示(押下から表示までの空白を埋める)。
+    this.setEvalPending(true);
+
+    const result = await (promise ?? Promise.resolve<EvalResult | null>(null));
+    if (gen !== this.generation || !this.game) return;
+    // 表示中に手番が進んでいたら捨てる。
+    if (this.game.getCurrentPlayer() !== player) return;
+    // 待っている間にトグルが OFF された場合も表示しない。
+    this.setEvalPending(false);
+    this.currentEvals = this.showEvals && result ? result.moves : null;
+    this.draw();
+  }
+
+  // =========================================================================
+  // 改善1: 評価値プリフェッチのヘルパ
+  // =========================================================================
+
+  /** 局面の同一性キー(盤面+手番+盤種)。プリフェッチ流用の判定に使う。 */
+  private positionKey(board: Board, player: Player, variant: VariantId): string {
+    return `${variant}|${player}|${board.join('')}`;
+  }
+
+  /**
+   * 現在のプレイヤー手番の局面を裏で評価開始しキャッシュする。
+   * 既に同一局面のプリフェッチがあれば二重に投げない。トグル OFF でも起動しておく。
+   * 世代(generation)管理は結果の **消費側**(loadEvalsForDisplay / scorePlayerMove)が
+   * 行うため、ここでは gen を受け取らない(キャッシュは clearPrefetch / 局面キーで管理)。
+   */
+  private startPrefetch(): void {
     if (!this.game || !this.config) return;
     const board = this.game.getBoard();
     const player = this.game.getCurrentPlayer();
     const variant = this.config.variant;
-    const result = await this.client.evaluate(board, player, variant).catch(() => null);
-    if (gen !== this.generation || !this.game) return;
-    // 表示中に手番が進んでいたら捨てる。
-    if (this.game.getCurrentPlayer() !== player) return;
-    this.currentEvals = this.showEvals && result ? result.moves : null;
-    this.draw();
+    const key = this.positionKey(board, player, variant);
+    if (this.prefetchKey === key && this.prefetchEvals) return; // 既に先読み中。
+    this.prefetchKey = key;
+    // 表示・採点の両方で使うため時間上限なしの通常評価(検討盤と同じ精度)。
+    // 盤面はコピーを渡す(以降の play で変わるため)。
+    this.prefetchEvals = this.client
+      .evaluate(board.slice(), player, variant)
+      .catch(() => null);
+  }
+
+  /**
+   * 着手時に、その着手前局面に対するプリフェッチを採点へ引き渡す。
+   * 局面キーが一致すれば Promise を返し(scorePlayerMove が await)、
+   * 一致しなければ null(scorePlayerMove は自前で短時間評価する)。
+   * いずれにせよプリフェッチ状態はここでクリアする(手番が変わるため)。
+   */
+  private takePrefetchFor(
+    preBoard: Board,
+    player: Player,
+    variant: VariantId,
+  ): Promise<EvalResult | null> | null {
+    const key = this.positionKey(preBoard, player, variant);
+    const match = this.prefetchKey === key ? this.prefetchEvals : null;
+    this.clearPrefetch();
+    return match;
+  }
+
+  /** プリフェッチのキャッシュを破棄(手番が変わる/終局/画面破棄時)。 */
+  private clearPrefetch(): void {
+    this.prefetchEvals = null;
+    this.prefetchKey = null;
+  }
+
+  /** 評価値の「計算中…」表示の ON/OFF(プリフェッチ未完了でトグル ON のとき)。 */
+  private setEvalPending(on: boolean): void {
+    if (!this.turnBannerEl) return;
+    this.turnBannerEl.classList.toggle('eval-pending-note', on);
+    const existing = this.turnBannerEl.querySelector('.eval-pending-text');
+    if (on) {
+      if (!existing) {
+        const span = document.createElement('span');
+        span.className = 'eval-pending-text';
+        span.textContent = '評価値を計算中…';
+        this.turnBannerEl.appendChild(span);
+      }
+    } else if (existing) {
+      existing.remove();
+    }
   }
 
   private syncEvalToggleLabel(): void {
@@ -582,7 +735,11 @@ export class VersusScreen {
     if (play.totalMoves === 0) {
       const empty = document.createElement('div');
       empty.className = 'ps-empty';
-      empty.textContent = '採点対象の着手がありませんでした';
+      // 強制手しか無かった等で「選択を伴う着手」が無かったケース。
+      empty.textContent =
+        play.forcedCount > 0
+          ? '選択を伴う着手がなく(強制手のみ)採点できませんでした'
+          : '採点対象の着手がありませんでした';
       card.appendChild(title);
       card.appendChild(empty);
       return card;
@@ -610,7 +767,12 @@ export class VersusScreen {
         true,
       ),
     );
-    stats.appendChild(this.statRow('総手数', `${play.totalMoves}手`));
+    // 採点対象手数。強制手を除外している場合はその旨も併記。
+    const movesValue =
+      play.forcedCount > 0
+        ? `${play.totalMoves}手 <span class="ps-note">(強制手${play.forcedCount}手は除外)</span>`
+        : `${play.totalMoves}手`;
+    stats.appendChild(this.statRow('採点手数', movesValue, true));
 
     card.appendChild(title);
     card.appendChild(big);
@@ -676,18 +838,28 @@ export class VersusScreen {
     }
   }
 
-  /** 着手判定フィードバック(Perfect/Good/Bad)を一定時間表示。 */
+  /**
+   * 着手判定フィードバック(Perfect/Good/Bad)を一定時間表示(改善4)。
+   * 文言は種別ごとの候補からランダムに 1 つ選ぶ(同じ判定でも毎回変わる)。
+   * 表示するかどうかの条件判定(強制手・1手目の除外)は呼び出し側で済ませる。
+   */
   private showJudge(kind: MoveJudgeKind): void {
     if (!this.judgeEl) return;
     if (this.judgeTimer !== null) window.clearTimeout(this.judgeTimer);
-    const map: Record<MoveJudgeKind, { text: string; cls: string }> = {
-      perfect: { text: 'Perfect! 最善手です', cls: 'judge-perfect' },
-      good: { text: 'Good! 善手です', cls: 'judge-good' },
-      bad: { text: 'Bad! 悪手です', cls: 'judge-bad' },
+    const clsMap: Record<MoveJudgeKind, string> = {
+      perfect: 'judge-perfect',
+      good: 'judge-good',
+      bad: 'judge-bad',
     };
-    const { text, cls } = map[kind];
-    this.judgeEl.className = 'judge-feedback show ' + cls;
-    this.judgeEl.textContent = text;
+    this.judgeEl.className = 'judge-feedback show ' + clsMap[kind];
+    this.judgeEl.textContent = '';
+    const prefixEl = document.createElement('span');
+    prefixEl.className = 'judge-prefix';
+    prefixEl.textContent = JUDGE_PREFIX[kind];
+    const subEl = document.createElement('span');
+    subEl.className = 'judge-sub';
+    subEl.textContent = pickJudgeSubMessage(kind);
+    this.judgeEl.append(prefixEl, subEl);
     this.judgeTimer = window.setTimeout(() => {
       if (this.judgeEl) this.judgeEl.className = 'judge-feedback';
     }, 1800);

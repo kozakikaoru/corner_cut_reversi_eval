@@ -15,22 +15,41 @@ import {
   CELLS,
   BLACK,
   WHITE,
+  EMPTY,
   BLOCKED,
   blockedMaskFor,
 } from '../engine/types';
 import type { MoveEval } from '../engine/search';
 import { classifyMoves, formatEvalValue, type EvalClass } from './evalColor';
 
+/**
+ * 複数枚返るときのスタガー(順次)間隔(ms)と上限枚数。
+ * 1 枚あたりの反転時間そのものは CSS(.stone.flipping = 240ms)側で定義。
+ */
+const FLIP_STAGGER_MS = 45;
+const FLIP_STAGGER_MAX = 6;
+
 export class BoardView {
   private root: HTMLElement;
   private cells: HTMLElement[] = [];
   private onCellClick: (cell: number) => void;
   private blockedMask: ReadonlyArray<boolean>;
+  /**
+   * 直前に描画した盤面(石の反転アニメ用の差分検出)。
+   * null = まだ一度も描画していない / グリッドを作り直した直後(=初期描画は無アニメ)。
+   */
+  private prevBoard: Board | null = null;
+  /** アニメ無効(prefers-reduced-motion)。一度だけ判定してキャッシュ。 */
+  private readonly reduceMotion: boolean;
 
   constructor(root: HTMLElement, variant: VariantId, onCellClick: (cell: number) => void) {
     this.root = root;
     this.onCellClick = onCellClick;
     this.blockedMask = blockedMaskFor(variant);
+    this.reduceMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.build();
   }
 
@@ -44,6 +63,8 @@ export class BoardView {
     this.root.innerHTML = '';
     this.root.classList.add('board');
     this.cells = [];
+    // グリッドを作り直したら差分の基準は無し(次の描画はアニメしない)。
+    this.prevBoard = null;
     for (let cell = 0; cell < CELLS; cell++) {
       const el = document.createElement('div');
       el.className = 'cell';
@@ -77,6 +98,23 @@ export class BoardView {
     const evalByCell = new Map<number, MoveEval>();
     if (evals) for (const e of evals) evalByCell.set(e.cell, e);
 
+    // 改善2: 前回盤面との差分から「反転した石」「新たに置かれた石」を割り出し、
+    // それらにだけ控えめなアニメを当てる(全石の再描画でアニメが暴発しないように)。
+    const prev = this.prevBoard;
+    const animate = prev !== null && !this.reduceMotion;
+    // 反転枚数に応じたスタガー用に、反転セルへ 0,1,2,... の順番を割り当てる。
+    const flipOrder = new Map<number, number>();
+    if (animate && prev) {
+      let n = 0;
+      for (let cell = 0; cell < CELLS; cell++) {
+        const before = prev[cell];
+        const after = board[cell];
+        const flipped =
+          (before === BLACK && after === WHITE) || (before === WHITE && after === BLACK);
+        if (flipped) flipOrder.set(cell, n++);
+      }
+    }
+
     for (let cell = 0; cell < CELLS; cell++) {
       const el = this.cells[cell];
       const v = board[cell];
@@ -92,6 +130,19 @@ export class BoardView {
       if (v === BLACK || v === WHITE) {
         const stone = document.createElement('div');
         stone.className = 'stone ' + (v === BLACK ? 'black' : 'white');
+        if (animate && prev) {
+          const before = prev[cell];
+          if (flipOrder.has(cell)) {
+            // 反転(相手色→自色): フリップ + フェード。スタガーで順次。
+            stone.classList.add('flipping');
+            const order = Math.min(flipOrder.get(cell) ?? 0, FLIP_STAGGER_MAX);
+            const delay = order * FLIP_STAGGER_MS;
+            if (delay > 0) stone.style.animationDelay = `${delay}ms`;
+          } else if (before === EMPTY) {
+            // 新規着手(空→石): 軽いスケールイン。
+            stone.classList.add('placing');
+          }
+        }
         el.appendChild(stone);
         continue;
       }
@@ -116,5 +167,8 @@ export class BoardView {
         }
       }
     }
+
+    // 次回の差分用に現在の盤面を控える(コピー)。
+    this.prevBoard = board.slice();
   }
 }

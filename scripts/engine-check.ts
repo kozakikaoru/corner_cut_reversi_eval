@@ -462,6 +462,9 @@ console.log('=== I. 採点(着手判定・プレイ採点) ===');
   // 含まれない手・空でも壊れない。
   check('採点: 未知cellでも例外なく返る', judgeMove(evals, 99).kind !== undefined);
   check('採点: 空evalsでも neutral', judgeMove([], 10).kind === 'good');
+  // legalCount は合法手数(= evals.length)。
+  check('採点: legalCount=合法手数', judgeMove(evals, 10).legalCount === 4);
+  check('採点: 空evalsの legalCount=0', judgeMove([], 10).legalCount === 0);
 
   // I-2. 最終プレイ採点の集計。
   {
@@ -490,6 +493,56 @@ console.log('=== I. 採点(着手判定・プレイ採点) ===');
     // 空(着手なし)。
     const none = summarizePlay([]);
     check('採点: 着手0件はランクD・0点', none.totalScore === 0 && none.rank === 'D' && none.totalMoves === 0);
+  }
+
+  // I-4. 改善3: 強制手(合法手1個)の除外 と 選択肢の多さによる重み付け。
+  {
+    // ヘルパ: 任意の legalCount・kind の MoveScore を直接組み立てる
+    //(judgeMove 経由だと evals を毎回作る必要があるため、集計ロジックの検証は手組みで)。
+    const mk = (kind: 'perfect' | 'good' | 'bad', legalCount: number, loss = kind === 'perfect' ? 0 : kind === 'good' ? 1 : 4): MoveScore => ({
+      kind,
+      bestValue: 8,
+      chosenValue: 8 - loss,
+      loss,
+      legalCount,
+    });
+
+    // --- 強制手の除外 ---
+    // 合法手1個の局面は、たとえ「最善(=唯一手)」でも採点に含めない。
+    const forcedOnly = summarizePlay([mk('perfect', 1), mk('perfect', 1)]);
+    check('採点(改善3): 強制手のみは採点対象0', forcedOnly.totalMoves === 0);
+    check('採点(改善3): 強制手は forcedCount に計上', forcedOnly.forcedCount === 2);
+    check('採点(改善3): 強制手のみは totalPlayed=2', forcedOnly.totalPlayed === 2);
+    check('採点(改善3): 強制手のみはランクD・0点(高評価にしない)', forcedOnly.totalScore === 0 && forcedOnly.rank === 'D');
+
+    // 強制手 perfect を混ぜても、選択を伴う bad の評価が薄まらない(=強制手でスコアが上がらない)。
+    const badPlusForced = summarizePlay([mk('bad', 4), mk('perfect', 1), mk('perfect', 1), mk('perfect', 1)]);
+    const badOnly = summarizePlay([mk('bad', 4)]);
+    check('採点(改善3): 強制perfectを足してもスコアが上がらない', badPlusForced.totalScore === badOnly.totalScore);
+    check('採点(改善3): 強制手は内訳(perfect)に数えない', badPlusForced.perfectCount === 0 && badPlusForced.badCount === 1);
+    check('採点(改善3): 除外後の採点手数=1 / 強制3', badPlusForced.totalMoves === 1 && badPlusForced.forcedCount === 3);
+
+    // --- 選択肢の多さによる重み付け ---
+    // 「合法手の多い局面での好手」「少ない局面での悪手」の組み合わせは、
+    // 重みなしなら一致率50%だが、重み付きでは perfect 側(選択肢多)が重く出る。
+    const weighted = summarizePlay([mk('perfect', 16), mk('bad', 2)]);
+    const unweightedRate = 50; // 2手中1手 perfect = 50%(重みなし基準)
+    check('採点(改善3): 選択肢多のperfectは一致率を押し上げる(>50%)', weighted.bestMatchRate > unweightedRate);
+
+    // 逆向き: 「合法手の多い局面での悪手」「少ない局面での好手」だと一致率は下がる。
+    const weightedDown = summarizePlay([mk('bad', 16), mk('perfect', 2)]);
+    check('採点(改善3): 選択肢多のbadは一致率を押し下げる(<50%)', weightedDown.bestMatchRate < unweightedRate);
+
+    // 重み付き平均ロス: 同じ「perfect1・bad1」でも、bad の局面の選択肢が多いほどロスが重く出る。
+    const lossHardBad = summarizePlay([mk('perfect', 2), mk('bad', 16, 5)]);
+    const lossEasyBad = summarizePlay([mk('perfect', 16), mk('bad', 2, 5)]);
+    check('採点(改善3): 難所での悪手ほど平均ロスが大きい', lossHardBad.averageLoss > lossEasyBad.averageLoss);
+    check('採点(改善3): よって難所悪手の方が総合スコアは低い', lossHardBad.totalScore < lossEasyBad.totalScore);
+
+    // 全 perfect(選択肢ありの局面)はやはり満点・S(従来の体験を壊さない)。
+    const allPerfectChoices = summarizePlay([mk('perfect', 4), mk('perfect', 8), mk('perfect', 3)]);
+    check('採点(改善3): 選択肢ありの全perfectは100点・S', allPerfectChoices.totalScore === 100 && allPerfectChoices.rank === 'S');
+    check('採点(改善3): 全perfectで一致率100%(重み付きでも)', allPerfectChoices.bestMatchRate === 100);
   }
 
   // I-3. ランク境界。

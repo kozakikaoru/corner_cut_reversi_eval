@@ -22,9 +22,9 @@ import {
 } from '../engine/types';
 import { GameState } from '../game/gameState';
 import { BoardView } from './boardView';
+import { EvalClient } from '../worker/evalClient';
 import { ICON_UNDO, ICON_RESET, ICON_BACK } from './icons';
 import type { MoveEval } from '../engine/search';
-import type { EvalRequest, WorkerOutbound } from '../worker/protocol';
 
 export class EvalScreen {
   private container: HTMLElement;
@@ -37,8 +37,8 @@ export class EvalScreen {
   private variant: VariantId = DEFAULT_VARIANT;
   private firstPlayer: Player = BLACK;
 
-  private worker: Worker;
-  /** 最新リクエスト ID。古い結果は破棄する。 */
+  private client: EvalClient;
+  /** 最新リクエストの世代。古い Promise の結果はこれと突き合わせて破棄する。 */
   private reqId = 0;
   /** 現在評価中の手の結果(描画用キャッシュ)。 */
   private currentEvals: MoveEval[] | null = null;
@@ -54,17 +54,10 @@ export class EvalScreen {
     this.container = container;
     this.onBack = onBack;
 
-    this.worker = new Worker(new URL('../worker/eval.worker.ts', import.meta.url), {
-      type: 'module',
-    });
-    this.worker.onmessage = (e: MessageEvent<WorkerOutbound>) => this.onWorkerResult(e.data);
-    this.worker.onerror = (e: ErrorEvent) => {
-      e.preventDefault();
-      this.onWorkerFailure('評価ワーカーでエラーが発生しました');
-    };
-    this.worker.onmessageerror = () => {
-      this.onWorkerFailure('評価結果の受信に失敗しました');
-    };
+    // 対戦モードと同じ EvalClient(reqId 多重化 + Promise ラッパー + onerror/
+    // onmessageerror での reject)を共用する。検討盤は「最新リクエストのみ反映」
+    // なので、世代カウンタ(this.reqId)で古い Promise の結果を破棄する。
+    this.client = new EvalClient();
 
     this.renderBoardScreen();
     this.startGame();
@@ -72,8 +65,10 @@ export class EvalScreen {
 
   /** 画面破棄(メニューへ戻るとき worker を止める)。 */
   dispose(): void {
+    // 先に世代を進めておく。client.dispose() は保留中の Promise を reject するが、
+    // その catch は世代不一致で弾かれ、破棄後に draw() しない。
     this.reqId++;
-    this.worker.terminate();
+    this.client.dispose();
   }
 
   // ---- 画面: 検討盤(1画面) -------------------------------------------------
@@ -269,35 +264,24 @@ export class EvalScreen {
     const board = this.game.getBoard();
     const player = this.game.getCurrentPlayer();
 
-    this.reqId++;
+    // この評価の世代を採番。await から戻った時点で this.reqId と一致しなければ
+    // (盤面切替/着手/1手戻る/リセット/破棄で世代が進んだ後なので)結果を捨てる。
+    const reqId = ++this.reqId;
 
-    const req: EvalRequest = {
-      type: 'evaluate',
-      reqId: this.reqId,
-      board: Array.from(board),
-      player,
-      variant: this.variant,
-    };
-    this.worker.postMessage(req);
-  }
-
-  private onWorkerResult(res: WorkerOutbound): void {
-    if (res.reqId !== this.reqId) return;
-
-    if (res.type === 'error') {
-      this.currentEvals = null;
-      this.draw();
-      return;
-    }
-    if (res.type !== 'result') return;
-
-    this.currentEvals = res.moves;
-    this.draw();
-  }
-
-  private onWorkerFailure(_message: string): void {
-    this.currentEvals = null;
-    this.draw();
+    void this.client
+      .evaluate(board, player, this.variant)
+      .then((result) => {
+        if (reqId !== this.reqId) return; // 古い結果は破棄。
+        this.currentEvals = result.moves;
+        this.draw();
+      })
+      .catch(() => {
+        // 失敗(worker の error 応答 / onerror / onmessageerror / 破棄)。
+        // 最新世代のときだけ評価表示を消す(古い失敗は無視)。
+        if (reqId !== this.reqId) return;
+        this.currentEvals = null;
+        this.draw();
+      });
   }
 
   private handleCellClick(cell: number): void {

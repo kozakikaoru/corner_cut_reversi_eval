@@ -287,6 +287,30 @@ html, body {
   background: radial-gradient(circle at 35% 30%, #ffffff, #c4ccd4);
 }
 
+/* ---- 改善2: 石の反転 / 着手アニメ(控えめ・案Bに合う上品さ) ----
+ * transform/opacity のみを使うのでレイアウトシフトを起こさない。
+ * 反転は「Y軸まわりに起き上がる」フリップ + 軽いフェード(1枚 ~240ms)。
+ * 複数枚はJS側(BoardView)が animation-delay でスタガーする。 */
+.stone.flipping {
+  transform-origin: center;
+  backface-visibility: hidden;
+  animation: stoneFlip 240ms ease-out both;
+}
+@keyframes stoneFlip {
+  0% { transform: rotateY(-90deg) scale(0.92); opacity: 0.25; }
+  60% { opacity: 1; }
+  100% { transform: rotateY(0deg) scale(1); opacity: 1; }
+}
+
+/* 新規着手: 軽くスケールイン(打った手が「置かれた」感)。 */
+.stone.placing {
+  animation: stonePlace 200ms cubic-bezier(0.2, 0.8, 0.3, 1.1) both;
+}
+@keyframes stonePlace {
+  0% { transform: scale(0.4); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
 /* ---- 評価値: 暗プレート + 色リング + 白数字 ---- */
 
 .cell.eval-best,
@@ -718,6 +742,18 @@ html, body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }
 }
+/* 改善1: 評価値プリフェッチが間に合わずトグル ON されたときの「計算中…」表示。
+ * 手番バナー内に小さく添える(レイアウトは変えない)。 */
+.eval-pending-text {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+  animation: youTurnPulse 1.4s ease-in-out infinite;
+}
+
 .thinking-text { margin-right: 2px; }
 /* AI思考中の「…」ドットアニメ(固まり感の緩和) */
 .thinking-dots {
@@ -759,7 +795,6 @@ html, body {
   align-items: center;
   justify-content: center;
   font-size: 16px;
-  font-weight: 800;
   letter-spacing: 0.02em;
   opacity: 0;
   transform: translateY(4px);
@@ -772,6 +807,10 @@ html, body {
 .judge-feedback.judge-perfect { color: var(--best-ring); }
 .judge-feedback.judge-good { color: var(--good-ring); }
 .judge-feedback.judge-bad { color: var(--bad-ring); }
+
+/* 接頭辞(Perfect!! / Good! / Bad...)は太字で目立たせ、続くメッセージは細字の普通字に。 */
+.judge-prefix { font-weight: 800; }
+.judge-sub { font-weight: 400; margin-left: 6px; }
 
 /* 評価値表示トグル(アクティブ時はアクセント) */
 .btn-eval-toggle.active {
@@ -884,6 +923,8 @@ html, body {
 .ps-row:first-child { border-top: 0; }
 .ps-label { font-size: 14px; color: var(--text-dim); }
 .ps-value { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* 採点手数の補足(強制手除外の注記)。控えめに小さく。 */
+.ps-note { font-size: 12px; font-weight: 600; color: var(--text-dim); margin-left: 4px; }
 .ps-value .tag {
   font-size: 12px;
   font-weight: 700;
@@ -910,8 +951,16 @@ html, body {
     animation: none;
   }
   .your-turn-text,
-  .thinking-dots i {
+  .thinking-dots i,
+  .eval-pending-text {
     animation: none;
   }
   .thinking-dots i { opacity: 0.7; }
+  /* 石の反転・着手アニメも無効化(JS 側でもクラスを付けないが二重防御)。 */
+  .stone.flipping,
+  .stone.placing {
+    animation: none;
+    transform: none;
+    opacity: 1;
+  }
 }
