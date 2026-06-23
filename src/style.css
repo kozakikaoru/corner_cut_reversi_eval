@@ -1,27 +1,45 @@
 /* ------------------------------------------------------------------ *
- * 変則オセロ 検討盤 スタイル
- * 配色は CSS 変数で集中管理(後でテーマ調整しやすく)。
+ * 変則オセロ 検討盤 スタイル — デザイン案B(ネオン・ダーク)
+ *
+ * 方向性: 対局解析ソフト風の暗い UI。盤面はディープティール。
+ * 評価値の見せ方(可読性の肝):
+ *   各合法手セルに「暗いプレート(角丸)」を敷き、その上に必ず白文字で数字。
+ *   → 地の色(ティール/評価色)に依存せず数字が常に読める。
+ *   プレートの枠(リング)の色で 最善/善手/悪手 を表現。
+ *   最善手は色以外でも区別(リングを太く + ★ + 軽いパルス)。発光/ぼかしは使わない。
+ *
+ * 配色は CSS 変数で集中管理。
  * ------------------------------------------------------------------ */
 
 :root {
-  --bg: #1f2730;
-  --panel: #28323d;
-  --board-bg: #1d6b3f;     /* 盤の緑 */
-  --board-line: #14502f;
-  --cell-empty: #2f8d57;
-  --blocked-bg: #161b21;   /* 欠けマス(盤外)*/
-  --stone-black: #16191d;
-  --stone-white: #f4f6f8;
-  --text: #e8edf2;
-  --text-dim: #9fb0bf;
+  /* ベース配色(案B) */
+  --bg: #0e1419;            /* 背景: 締めた濃紺グレー */
+  --panel: #18222c;         /* パネル/カード */
+  --board-bg: #0f3b34;      /* 盤面: ディープティール */
+  --board-line: #0a2e2a;    /* 盤の枠/線 */
+  --cell-empty: #13564c;    /* 空きセル: 暗めの青緑 */
+  --blocked-bg: #0e1419;    /* 欠けマス = 背景色に沈めて「穴」に見せる */
+  --stone-black: #0c0f12;
+  --stone-white: #f2f5f8;
+  --text: #e8f0ee;          /* メインテキスト */
+  --text-dim: #7fa99f;      /* 補助テキスト */
 
-  /* 評価値の3色 */
-  --best-bg: #2563eb;          /* 最善手: 青 */
-  --best-glow: #7cb0ff;
-  --good-bg: #1f9d55;          /* 善手: 緑 */
-  --bad-bg: #c0392b;           /* 悪手: 赤 */
+  /* 評価値の3色(リング色) */
+  --best-ring: #3b82f6;     /* 最善手: 明るい青 */
+  --good-ring: #a3e635;     /* 善手: ライム */
+  --bad-ring: #f87171;      /* 悪手: コーラルレッド */
 
-  --legal-ring: rgba(255, 255, 255, 0.35);
+  /* 評価値プレート(数字の地。常にこの上に白文字を置く) */
+  --eval-plate: #0a1a17;    /* 暗いプレート */
+  --eval-num: #ffffff;      /* 数字は常に白 */
+
+  /* 合法手(評価待ち)の控えめなヒント */
+  --legal-ring: rgba(127, 169, 159, 0.45);
+
+  /* アクセント(ホバー時のシアン枠など) */
+  --accent: #5fd2c0;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 * {
@@ -59,6 +77,7 @@ html, body {
 .select-screen h1 {
   font-size: 28px;
   margin-bottom: 8px;
+  letter-spacing: 0.02em;
 }
 
 .subtitle {
@@ -80,6 +99,7 @@ html, body {
   flex-wrap: wrap;
 }
 
+/* 選択ボタンもゴースト風(枠線のみ)に統一 */
 .big-btn {
   display: inline-flex;
   align-items: center;
@@ -87,20 +107,21 @@ html, body {
   font-size: 18px;
   padding: 16px 28px;
   border-radius: 12px;
-  border: 2px solid transparent;
+  border: 1px solid #2a3a44;
   cursor: pointer;
-  background: var(--panel);
+  background: transparent;
   color: var(--text);
-  transition: transform 0.08s ease, border-color 0.15s ease;
+  transition: transform 0.08s ease, border-color 0.15s ease, background 0.15s ease;
 }
 
 .big-btn:hover {
   transform: translateY(-2px);
-  border-color: var(--best-glow);
+  border-color: var(--accent);
+  background: rgba(95, 210, 192, 0.06);
 }
 
-.select-black { border-color: #444; }
-.select-white { border-color: #aaa; }
+.select-black { border-color: #39444c; }
+.select-white { border-color: #5d6b73; }
 
 /* ---- 検討盤画面 ---- */
 
@@ -110,26 +131,28 @@ html, body {
   gap: 14px;
 }
 
+/* ステータスバー(暗カード) */
 .status {
   display: flex;
   justify-content: space-between;
   align-items: center;
   background: var(--panel);
+  border: 1px solid #21303a;
   border-radius: 10px;
-  padding: 10px 16px;
+  padding: 10px 18px;
 }
 
 .score {
   display: flex;
-  gap: 18px;
-  font-size: 20px;
-  font-weight: 600;
+  gap: 20px;
+  font-size: 22px;
+  font-weight: 700;
 }
 
 .score-item {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
 }
 
 .turn {
@@ -142,17 +165,21 @@ html, body {
   font-size: 18px;
 }
 
-/* 小さな石アイコン(スコア・ボタン用) */
+/* 小さな石アイコン(スコア用) */
 .disc {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   display: inline-block;
 }
-.disc.black { background: var(--stone-black); border: 1px solid #555; }
-.disc.white { background: var(--stone-white); border: 1px solid #ccc; }
+.disc.black { background: var(--stone-black); border: 1px solid #2c333b; }
+.disc.white { background: var(--stone-white); border: 1px solid #c4ccd4; }
 
-/* ---- 盤面グリッド ---- */
+/* ---- 盤面グリッド ----
+ * レイアウトシフト対策(維持必須):
+ *   8等分固定グリッド + 盤と各セルに aspect-ratio:1/1。
+ *   評価値の有無で寸法が変わらないよう、数字/プレートは絶対配置で重ねる。
+ */
 
 .board {
   display: grid;
@@ -161,9 +188,11 @@ html, body {
   gap: 3px;
   background: var(--board-line);
   padding: 6px;
-  border-radius: 8px;
+  border-radius: 10px;
   aspect-ratio: 1 / 1;
   width: 100%;
+  /* 盤に内側シャドウで“沈み”を出す(フラットな範囲で) */
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45), inset 0 2px 14px rgba(0, 0, 0, 0.35);
 }
 
 .cell {
@@ -179,94 +208,122 @@ html, body {
   aspect-ratio: 1 / 1;
 }
 
-/* 欠けマス(盤外) */
+/* 欠けマス(盤外): 背景色に沈めて「穴」に見せる */
 .cell.blocked {
   background: var(--blocked-bg);
   cursor: default;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.6);
 }
 
-/* 合法手セル */
+/* 合法手セル(評価待ち): 控えめな内側リングのヒントのみ */
 .cell.legal {
   cursor: pointer;
+}
+.cell.eval-pending {
   box-shadow: inset 0 0 0 2px var(--legal-ring);
 }
-
 .cell.eval-pending::after {
   /* 評価待ちの小さなドット */
   content: "";
-  width: 26%;
-  height: 26%;
+  width: 24%;
+  height: 24%;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.4);
+  background: rgba(232, 240, 238, 0.4);
 }
 
 /* 石 */
 .stone {
-  width: 78%;
-  height: 78%;
+  width: 80%;
+  height: 80%;
   border-radius: 50%;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
 }
 .stone.black {
-  background: radial-gradient(circle at 35% 30%, #3a3f45, var(--stone-black));
+  background: radial-gradient(circle at 35% 30%, #2c333b, var(--stone-black));
 }
 .stone.white {
-  background: radial-gradient(circle at 35% 30%, #ffffff, #d4d9de);
+  background: radial-gradient(circle at 35% 30%, #ffffff, #c4ccd4);
 }
 
-/* 評価値オーバーレイ */
-.eval-label {
-  font-weight: 700;
-  font-size: clamp(12px, 3.4vw, 20px);
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-  z-index: 1;
-}
+/* ---- 評価値: 暗プレート + 色リング + 白数字 ---- */
 
-/* 合法手セルの色分け(背景の円で表現) */
 .cell.eval-best,
 .cell.eval-good,
 .cell.eval-bad {
   cursor: pointer;
 }
 
+/* 暗いプレート(角丸の四角)。数字の地。地の色に依存させない。
+ * inset を 12% に取り、2桁・符号付き(+18 / −11 等)でも窮屈にならない幅を確保。 */
 .cell.eval-best::before,
 .cell.eval-good::before,
 .cell.eval-bad::before {
   content: "";
   position: absolute;
   inset: 12%;
-  border-radius: 50%;
+  border-radius: 22%;
+  background: var(--eval-plate);
+  /* 色リング(フラット。発光・ぼかしなし)。box-shadow inset で太さを表現。 */
+  box-shadow: inset 0 0 0 2.5px var(--ring-color, var(--good-ring));
 }
 
-.cell.eval-good::before { background: var(--good-bg); }
-.cell.eval-bad::before  { background: var(--bad-bg); }
+.cell.eval-good::before { --ring-color: var(--good-ring); }
+.cell.eval-bad::before  { --ring-color: var(--bad-ring); }
 
-/* 最善手: 目立つ色 + 光る枠 */
+/* 最善手: 青リング + 太く + ★ + 軽いパルス(グロー/ぼかしなし) */
 .cell.eval-best::before {
-  background: var(--best-bg);
-  box-shadow:
-    0 0 0 3px var(--best-glow),
-    0 0 12px 2px var(--best-glow);
-  animation: bestPulse 1.4s ease-in-out infinite;
+  --ring-color: var(--best-ring);
+  /* リングを一段太く(色以外でも区別) */
+  box-shadow: inset 0 0 0 3.5px var(--best-ring);
+  animation: bestPulse 1.8s ease-in-out infinite;
 }
 
+/* 最善手の★(プレート上端の小さなバッジ。数字とは重ならない位置) */
+.cell.eval-best::after {
+  content: "★";
+  position: absolute;
+  top: 6%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: clamp(8px, 2.2vw, 12px);
+  line-height: 1;
+  color: var(--best-ring);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* 軽いパルス(リング太さのみを薄く脈動。発光は使わない) */
 @keyframes bestPulse {
-  0%, 100% { box-shadow: 0 0 0 3px var(--best-glow), 0 0 10px 1px var(--best-glow); }
-  50%      { box-shadow: 0 0 0 3px var(--best-glow), 0 0 18px 5px var(--best-glow); }
+  0%, 100% { box-shadow: inset 0 0 0 3.5px var(--best-ring); }
+  50%      { box-shadow: inset 0 0 0 3px var(--best-ring); }
 }
 
-/* ---- エンジン情報 ---- */
+/* 数字: 常に白文字。プレート上なので地の評価色に依存せず読める。 */
+.eval-label {
+  position: relative; /* プレート(::before)より前面 */
+  z-index: 1;
+  font-weight: 800;
+  /* セル短辺の約36〜42%(最低14px)。2桁/マイナス値でも収まるサイズ。 */
+  font-size: clamp(14px, 4.6vw, 24px);
+  line-height: 1;
+  color: var(--eval-num);
+  font-variant-numeric: tabular-nums;
+  /* 2桁+符号(+18 / −34 等)でもプレートに余裕を持って収まるよう僅かに詰める。 */
+  letter-spacing: -0.03em;
+}
+
+/* ---- エンジン情報(等幅・解析ソフト感) ---- */
 
 .engine-info {
   text-align: center;
+  font-family: var(--mono);
   font-size: 13px;
+  letter-spacing: 0.01em;
   color: var(--text-dim);
   min-height: 18px;
 }
 
-/* ---- コントロール ---- */
+/* ---- コントロール(ゴーストボタン) ---- */
 
 .controls {
   display: flex;
@@ -279,19 +336,21 @@ html, body {
   font-size: 15px;
   padding: 10px 18px;
   border-radius: 10px;
-  border: 1px solid #3a4754;
-  background: var(--panel);
+  border: 1px solid #2a3a44;
+  background: transparent;
   color: var(--text);
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 
 .ctrl-btn:hover:not(:disabled) {
-  background: #33414e;
+  border-color: var(--accent);
+  color: #ffffff;
+  background: rgba(95, 210, 192, 0.08);
 }
 
 .ctrl-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
@@ -302,13 +361,13 @@ html, body {
   left: 50%;
   bottom: 32px;
   transform: translateX(-50%);
-  background: #0f1419;
+  background: #0a1014;
   color: var(--text);
-  border: 1px solid #3a4754;
+  border: 1px solid #2a3a44;
   border-radius: 10px;
   padding: 12px 20px;
   font-size: 15px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
   max-width: 90vw;
   text-align: center;
   z-index: 10;
@@ -316,4 +375,11 @@ html, body {
 
 .toast.hidden {
   display: none;
+}
+
+/* アクセシビリティ: アニメ抑制設定を尊重 */
+@media (prefers-reduced-motion: reduce) {
+  .cell.eval-best::before {
+    animation: none;
+  }
 }

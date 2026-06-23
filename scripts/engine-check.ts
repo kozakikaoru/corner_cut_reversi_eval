@@ -60,33 +60,34 @@ function check(name: string, cond: boolean): void {
   check('(1,1)は欠け', isCornerCut(1, 1));
 }
 
-// --- 2. 初期配置 -------------------------------------------------------------
+// --- 2. 初期配置(本ツールは通常オセロと白黒を反転した配置) ------------------
 {
   const b = createInitialBoard();
   const { black, white, empty } = countDiscs(b);
   check('初期: 黒2 白2', black === 2 && white === 2);
   check('初期: 空き44', empty === 44);
-  check('初期(3,3)=白', b[idx(3, 3)] === WHITE);
-  check('初期(4,4)=白', b[idx(4, 4)] === WHITE);
-  check('初期(3,4)=黒', b[idx(3, 4)] === BLACK);
-  check('初期(4,3)=黒', b[idx(4, 3)] === BLACK);
+  // 反転後: 黒=(3,3),(4,4) / 白=(3,4),(4,3)
+  check('初期(3,3)=黒', b[idx(3, 3)] === BLACK);
+  check('初期(4,4)=黒', b[idx(4, 4)] === BLACK);
+  check('初期(3,4)=白', b[idx(3, 4)] === WHITE);
+  check('初期(4,3)=白', b[idx(4, 3)] === WHITE);
 }
 
-// --- 3. 合法手と反転(通常オセロと同じ中央なので既知) ------------------------
+// --- 3. 合法手と反転(白黒反転配置での既知手) --------------------------------
 {
   const b = createInitialBoard();
   const blackMoves = legalMoves(b, BLACK).sort((a, c) => a - c);
-  // 標準オセロ初期局面の黒の合法手は (2,3)(3,2)(4,5)(5,4)
-  const expected = [idx(2, 3), idx(3, 2), idx(4, 5), idx(5, 4)].sort((a, c) => a - c);
+  // 白黒反転配置(黒 d4/e5・白 d5/e4)での黒の合法手は (2,4)(3,5)(4,2)(5,3)
+  const expected = [idx(2, 4), idx(3, 5), idx(4, 2), idx(5, 3)].sort((a, c) => a - c);
   check('初期黒の合法手は4つ', blackMoves.length === 4);
-  check('初期黒の合法手が標準と一致', JSON.stringify(blackMoves) === JSON.stringify(expected));
+  check('初期黒の合法手が反転配置と一致', JSON.stringify(blackMoves) === JSON.stringify(expected));
 
-  // (2,3) に黒 → (3,3) の白が反転して黒が3個
-  const after = applyMove(b, idx(2, 3), BLACK)!;
+  // (2,4) に黒 → (3,4) の白が反転して黒が4個・白が1個
+  const after = applyMove(b, idx(2, 4), BLACK)!;
   check('着手後 nullでない', after !== null);
   const c2 = countDiscs(after);
-  check('(2,3)着手後 黒4 白1', c2.black === 4 && c2.white === 1);
-  check('(3,3)が黒に反転', after[idx(3, 3)] === BLACK);
+  check('(2,4)着手後 黒4 白1', c2.black === 4 && c2.white === 1);
+  check('(3,4)が黒に反転', after[idx(3, 4)] === BLACK);
 }
 
 // --- 4. 非合法手 -------------------------------------------------------------
@@ -202,10 +203,18 @@ function check(name: string, cond: boolean): void {
   // 修正前: negamax が投げる TimeUp が evaluatePosition を貫通し、Worker→UI が
   //         ハングし得た(QAレポート 問題①)。
   // 修正後: 例外を内部で捕捉し、中盤探索の暫定値へフォールバックして必ず返る。
+  //
+  // 空き数の目標を 14 にする理由:
+  //   後半サブブロックで「時間制限なしなら完全読みが必ず終わる(endgame=true)」を
+  //   確認するため、完全読みがデフォルト時間(ENDGAME_TIME_MS=3秒)内に終わる
+  //   軽さの局面が必要。空き16はこの決定論的プレイアウトだと約10秒/400万ノード級に
+  //   なり3秒で打ち切られてしまう(=正しいフォールバック挙動だが完全読みの確認には
+  //   不向き)。空き14なら数十msで読み切れ、かつ timeLimitMs:1 では確実に時間切れ
+  //   になるので、フォールバック経路・完全読み経路の両方を1局面で検証できる。
   let b = createInitialBoard();
   let player: 1 | 2 = BLACK;
   let guard = 0;
-  while (countEmpties(b) > 16 && guard < 300) {
+  while (countEmpties(b) > 14 && guard < 300) {
     guard++;
     const moves = legalMoves(b, player);
     if (moves.length === 0) {

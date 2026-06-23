@@ -75,17 +75,17 @@ export function createEmptyBoard(): Board {
 }
 
 /**
- * 初期盤面。中央4マスに通常オセロと同じ交差配置。
- *   d4/e5 = 白, d5/e4 = 黒。
+ * 初期盤面。中央4マスの交差配置。
+ *   通常オセロとは白黒を反転させた配置(本ツールの仕様)。
  * 0-index の (row,col) では:
- *   白: (3,3),(4,4) / 黒: (3,4),(4,3)
+ *   黒: (3,3),(4,4) / 白: (3,4),(4,3)
  */
 export function createInitialBoard(): Board {
   const b = createEmptyBoard();
-  b[idx(3, 3)] = WHITE;
-  b[idx(4, 4)] = WHITE;
-  b[idx(3, 4)] = BLACK;
-  b[idx(4, 3)] = BLACK;
+  b[idx(3, 3)] = BLACK;
+  b[idx(4, 4)] = BLACK;
+  b[idx(3, 4)] = WHITE;
+  b[idx(4, 3)] = WHITE;
   return b;
 }
 
