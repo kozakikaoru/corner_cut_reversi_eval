@@ -1,19 +1,22 @@
 /**
  * 盤面の描画(DOM)。
- * - 8×8 グリッド。四隅2×2は "blocked"(盤外スタイル、クリック無効)。
+ * - 8×8 グリッド(全盤面共通)。欠けマスは "blocked"(盤外スタイル、クリック無効)。
  * - 石(黒/白)を描画。
  * - 合法手セルに評価値オーバーレイ(数値 + 3色)。最善手は強調。
  * - 合法手セルのクリックでコールバック。
+ *
+ * フェーズ2: 欠けマスは盤面(VariantId)ごとに違うため、外から欠けマスフラグ表
+ * (blockedMask)を受け取って描画する。盤面を切り替えたら setVariant で作り直す。
  */
 
 import {
   type Board,
+  type VariantId,
   CELLS,
-  SIZE,
   BLACK,
   WHITE,
   BLOCKED,
-  isCornerCut,
+  blockedMaskFor,
 } from '../engine/types';
 import type { MoveEval } from '../engine/search';
 import { classifyMoves, formatEvalValue, type EvalClass } from './evalColor';
@@ -22,10 +25,18 @@ export class BoardView {
   private root: HTMLElement;
   private cells: HTMLElement[] = [];
   private onCellClick: (cell: number) => void;
+  private blockedMask: ReadonlyArray<boolean>;
 
-  constructor(root: HTMLElement, onCellClick: (cell: number) => void) {
+  constructor(root: HTMLElement, variant: VariantId, onCellClick: (cell: number) => void) {
     this.root = root;
     this.onCellClick = onCellClick;
+    this.blockedMask = blockedMaskFor(variant);
+    this.build();
+  }
+
+  /** 盤面の種類を切り替えてグリッドを作り直す(欠けマスの位置が変わるため)。 */
+  setVariant(variant: VariantId): void {
+    this.blockedMask = blockedMaskFor(variant);
     this.build();
   }
 
@@ -34,12 +45,10 @@ export class BoardView {
     this.root.classList.add('board');
     this.cells = [];
     for (let cell = 0; cell < CELLS; cell++) {
-      const row = Math.floor(cell / SIZE);
-      const col = cell % SIZE;
       const el = document.createElement('div');
       el.className = 'cell';
       el.dataset.cell = String(cell);
-      if (isCornerCut(row, col)) {
+      if (this.blockedMask[cell]) {
         el.classList.add('blocked');
       } else {
         el.addEventListener('click', () => this.handleClick(cell));

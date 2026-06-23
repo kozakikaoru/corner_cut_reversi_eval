@@ -3,11 +3,12 @@
  * - 着手 / パス / 終局の遷移
  * - 履歴(待った=1手戻る)
  * - 現在の手番・盤面の保持
+ * - 盤面の種類(VariantId)を保持し、盤面ロジックに必要なレイを供給する
  *
  * 「パス自動処理」「終局表示」のための判定もここに集約する。
  */
 
-import { type Board, type Player, BLACK, opponent } from '../engine/types';
+import { type Board, type Player, type VariantId, BLACK, opponent } from '../engine/types';
 import {
   createInitialBoard,
   cloneBoard,
@@ -16,6 +17,7 @@ import {
   legalMoves,
   countDiscs,
   isGameOver,
+  raysFor,
 } from '../engine/board';
 
 /** 履歴 1 ステップ。 */
@@ -32,13 +34,23 @@ export interface PassInfo {
 export class GameState {
   private board: Board;
   private current: Player;
+  /** 盤面の種類。レイ(壁の手前で打ち切る方向テーブル)を選ぶのに使う。 */
+  private readonly variant: VariantId;
+  /** この盤面の方向レイ(毎回引かずに保持)。 */
+  private readonly rays: number[][][];
   /** 直前の盤面/手番を積むスタック(待った用)。 */
   private history: HistoryEntry[] = [];
 
-  constructor(firstPlayer: Player) {
-    this.board = createInitialBoard();
+  constructor(firstPlayer: Player, variant: VariantId) {
+    this.variant = variant;
+    this.rays = raysFor(variant);
+    this.board = createInitialBoard(variant);
     this.current = firstPlayer;
     this.history = [];
+  }
+
+  getVariant(): VariantId {
+    return this.variant;
   }
 
   getBoard(): Board {
@@ -50,7 +62,7 @@ export class GameState {
   }
 
   getLegalMoves(): number[] {
-    return legalMoves(this.board, this.current);
+    return legalMoves(this.board, this.current, this.rays);
   }
 
   canUndo(): boolean {
@@ -58,12 +70,12 @@ export class GameState {
   }
 
   isOver(): boolean {
-    return isGameOver(this.board);
+    return isGameOver(this.board, this.rays);
   }
 
   /** 現在の手番が打てるか。 */
   currentHasMove(): boolean {
-    return hasLegalMove(this.board, this.current);
+    return hasLegalMove(this.board, this.current, this.rays);
   }
 
   getCounts(): { black: number; white: number; empty: number } {
@@ -77,7 +89,7 @@ export class GameState {
    * autoPassIfNeeded を呼ぶ設計)。
    */
   play(cell: number): boolean {
-    const next = applyMove(this.board, cell, this.current);
+    const next = applyMove(this.board, cell, this.current, this.rays);
     if (!next) return false;
     this.history.push({ board: this.board, player: this.current });
     this.board = next;

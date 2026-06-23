@@ -1,12 +1,12 @@
 /* ------------------------------------------------------------------ *
- * 変則オセロ 検討盤 スタイル — デザイン案B(ネオン・ダーク)
+ * 異形オセロ 検討盤 スタイル — デザイン案B(ネオン・ダーク)
  *
  * 方向性: 対局解析ソフト風の暗い UI。盤面はディープティール。
  * 評価値の見せ方(可読性の肝):
  *   各合法手セルに「暗いプレート(角丸)」を敷き、その上に必ず白文字で数字。
  *   → 地の色(ティール/評価色)に依存せず数字が常に読める。
  *   プレートの枠(リング)の色で 最善/善手/悪手 を表現。
- *   最善手は色以外でも区別(リングを太く + ★ + 軽いパルス)。発光/ぼかしは使わない。
+ *   最善手は色以外でも区別(リングを太く二重 + 軽いパルス)。発光/ぼかしは使わない。
  *
  * 配色は CSS 変数で集中管理。
  * ------------------------------------------------------------------ */
@@ -24,10 +24,13 @@
   --text: #e8f0ee;          /* メインテキスト */
   --text-dim: #7fa99f;      /* 補助テキスト */
 
-  /* 評価値の3色(リング色) */
-  --best-ring: #3b82f6;     /* 最善手: 明るい青 */
-  --good-ring: #a3e635;     /* 善手: ライム */
-  --bad-ring: #f87171;      /* 悪手: コーラルレッド */
+  /* 評価値の3色(リング色)— 暖→中立→冷の統一トーン。
+   * 寒色の暗ティール背景では暖色・高彩度ほど前進、寒色・低彩度ほど後退する。
+   * 最善=アンバー(前進・主役) > 善手=ティールグリーン(盤と同系で脇役) > 悪手=ダルレッド(沈む)。 */
+  --best-ring: #ffb020;     /* 最善手: アンバー(主役・最前面) */
+  --good-ring: #3fbf9f;     /* 善手: ティールグリーン(盤と同系で脇役) */
+  --bad-ring: #c2615a;      /* 悪手: ダルレッド(低彩度・最後尾) */
+  --best-halo: rgba(255, 176, 32, 0.22);  /* 最善の内側第2リング(色を抜いても二重で判別できる) */
 
   /* 評価値プレート(数字の地。常にこの上に白文字を置く) */
   --eval-plate: #0a1a17;    /* 暗いプレート */
@@ -67,68 +70,107 @@ html, body {
   max-width: 560px;
 }
 
-/* ---- 先手色選択画面 ---- */
-
-.select-screen {
-  text-align: center;
-  padding-top: 8vh;
-}
-
-.select-screen h1 {
-  font-size: 28px;
-  margin-bottom: 8px;
-  letter-spacing: 0.02em;
-}
-
-.subtitle {
-  color: var(--text-dim);
-  margin: 0 auto 32px;
-  max-width: 420px;
-  line-height: 1.6;
-}
-
-.prompt {
-  font-size: 18px;
-  margin-bottom: 20px;
-}
-
-.select-buttons {
-  display: flex;
-  gap: 16px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-/* 選択ボタンもゴースト風(枠線のみ)に統一 */
-.big-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 18px;
-  padding: 16px 28px;
-  border-radius: 12px;
-  border: 1px solid #2a3a44;
-  cursor: pointer;
-  background: transparent;
-  color: var(--text);
-  transition: transform 0.08s ease, border-color 0.15s ease, background 0.15s ease;
-}
-
-.big-btn:hover {
-  transform: translateY(-2px);
-  border-color: var(--accent);
-  background: rgba(95, 210, 192, 0.06);
-}
-
-.select-black { border-color: #39444c; }
-.select-white { border-color: #5d6b73; }
-
-/* ---- 検討盤画面 ---- */
+/* ---- 検討盤画面(1画面完結) ---- */
 
 .board-screen {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* コンパクトなタイトル */
+.app-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 0;
+  text-align: center;
+  color: var(--text);
+}
+
+/* ---- 設定ツールバー(盤面の種類 / 先手の色) ----
+ * 案B(ネオン・ダーク)のトーン: 暗パネル + ゴースト枠のセグメントボタン。
+ * アクティブはアクセントのシアン枠 + 薄い塗りで明示。発光は使わない。
+ */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--panel);
+  border: 1px solid #21303a;
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.toolbar-label {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+/* セグメンテッドコントロール(連結ボタン群)。
+ * 角丸の同心円化: 外枠 border-radius(10) − padding(3) = 子の border-radius(7)。
+ * これで両端のアクティブピルも外枠と角が一致し、角欠けが原理的に起きない。
+ * 仕切り線(border-left)と overflow:hidden は撤去し、padding + gap 方式に統一。 */
+.segmented {
+  display: inline-flex;
+  border: 1px solid #2a3a44;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  padding: 3px;               /* アクティブピルの“逃げ”。角丸不一致を解消する余白 */
+  gap: 2px;                   /* ボタン間は仕切り線でなく隙間で区切る */
+  overflow: visible;          /* inset 枠を使わないので hidden 不要 */
+}
+
+.seg-btn {
+  appearance: none;
+  border: 0;                  /* 仕切り線(border-left)は撤去。gap で区切る */
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 7px;         /* 外枠10 − padding3 ≈ 7 で同心円 */
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.seg-btn:hover:not(.active) {
+  color: var(--text);
+  background: rgba(95, 210, 192, 0.07);
+}
+
+/* アクティブ: inset 枠ではなく“塗りピル”。角丸が外枠と同心で欠けない。 */
+.seg-btn.active {
+  color: #04201b;                          /* 塗りが明るいので濃色文字でコントラスト確保 */
+  background: var(--accent);               /* #5fd2c0 のソリッド塗り */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.seg-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 先手色ボタン内の小さな石アイコン */
+.seg-color .disc {
+  width: 14px;
+  height: 14px;
 }
 
 /* ステータスバー(暗カード) */
@@ -267,35 +309,31 @@ html, body {
   box-shadow: inset 0 0 0 2.5px var(--ring-color, var(--good-ring));
 }
 
-.cell.eval-good::before { --ring-color: var(--good-ring); }
-.cell.eval-bad::before  { --ring-color: var(--bad-ring); }
+/* 善手・悪手: 太さで序列をつける(善手 2px > 悪手 1.5px)。 */
+.cell.eval-good::before {
+  --ring-color: var(--good-ring);
+  box-shadow: inset 0 0 0 2px var(--good-ring);
+}
+.cell.eval-bad::before {
+  --ring-color: var(--bad-ring);
+  box-shadow: inset 0 0 0 1.5px var(--bad-ring);
+}
 
-/* 最善手: 青リング + 太く + ★ + 軽いパルス(グロー/ぼかしなし) */
+/* 最善手: 太いアンバーリング(4px) + 内側ハロー(8px)の二重構造 + 軽いパルス。
+ * 二重リングで、グレースケール化しても最善のセルだけ枠が明らかに厚く・二重に見える(★不要)。
+ * グロー/ぼかしは使わない。 */
 .cell.eval-best::before {
   --ring-color: var(--best-ring);
-  /* リングを一段太く(色以外でも区別) */
-  box-shadow: inset 0 0 0 3.5px var(--best-ring);
-  animation: bestPulse 1.8s ease-in-out infinite;
+  box-shadow:
+    inset 0 0 0 4px var(--best-ring),
+    inset 0 0 0 8px var(--best-halo);
+  animation: bestPulse 2s ease-in-out infinite;
 }
 
-/* 最善手の★(プレート上端の小さなバッジ。数字とは重ならない位置) */
-.cell.eval-best::after {
-  content: "★";
-  position: absolute;
-  top: 6%;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: clamp(8px, 2.2vw, 12px);
-  line-height: 1;
-  color: var(--best-ring);
-  z-index: 2;
-  pointer-events: none;
-}
-
-/* 軽いパルス(リング太さのみを薄く脈動。発光は使わない) */
+/* 軽いパルス(リング太さのみを薄く脈動。振れ幅は小さめ。発光は使わない) */
 @keyframes bestPulse {
-  0%, 100% { box-shadow: inset 0 0 0 3.5px var(--best-ring); }
-  50%      { box-shadow: inset 0 0 0 3px var(--best-ring); }
+  0%, 100% { box-shadow: inset 0 0 0 4px var(--best-ring),   inset 0 0 0 8px var(--best-halo); }
+  50%      { box-shadow: inset 0 0 0 3.5px var(--best-ring), inset 0 0 0 8px var(--best-halo); }
 }
 
 /* 数字: 常に白文字。プレート上なので地の評価色に依存せず読める。 */
@@ -312,18 +350,7 @@ html, body {
   letter-spacing: -0.03em;
 }
 
-/* ---- エンジン情報(等幅・解析ソフト感) ---- */
-
-.engine-info {
-  text-align: center;
-  font-family: var(--mono);
-  font-size: 13px;
-  letter-spacing: 0.01em;
-  color: var(--text-dim);
-  min-height: 18px;
-}
-
-/* ---- コントロール(ゴーストボタン) ---- */
+/* ---- コントロール(ゴーストボタン + ラインアイコン) ---- */
 
 .controls {
   display: flex;
@@ -333,20 +360,50 @@ html, body {
 }
 
 .ctrl-btn {
-  font-size: 15px;
-  padding: 10px 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 10px 16px;
   border-radius: 10px;
-  border: 1px solid #2a3a44;
+  border: 1px solid #2a3a44;          /* ゴースト枠 */
   background: transparent;
   color: var(--text);
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.06s ease;
 }
 
+/* アイコン(inline SVG・currentColor 追従)。文字とつぶれない最小幅を確保。 */
+.ctrl-icon {
+  flex-shrink: 0;
+}
+
+/* ホバー: アクセント枠 + 極薄塗り(既存方針) */
 .ctrl-btn:hover:not(:disabled) {
-  border-color: var(--accent);
+  border-color: var(--accent);        /* #5fd2c0 */
   color: #ffffff;
   background: rgba(95, 210, 192, 0.08);
+}
+
+/* 押下: わずかに沈める */
+.ctrl-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  background: rgba(95, 210, 192, 0.14);
+}
+
+/* リセットだけ: 破壊的操作のヒントとしてホバー時に警告色へ */
+.ctrl-btn.btn-reset:hover:not(:disabled) {
+  border-color: var(--bad-ring);      /* #c2615a */
+  color: #ffd9d4;
+  background: rgba(194, 97, 90, 0.10);
+}
+
+/* フォーカス可視(キーボード操作・アクセシビリティ) */
+.ctrl-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .ctrl-btn:disabled {

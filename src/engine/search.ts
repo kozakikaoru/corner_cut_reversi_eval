@@ -19,6 +19,7 @@
 import {
   type Board,
   type Player,
+  type VariantId,
   BLACK,
   opponent,
 } from './types';
@@ -30,8 +31,9 @@ import {
   hasLegalMove,
   countDiscs,
   countEmpties,
+  raysFor,
 } from './board';
-import { evaluateForPlayer } from './evaluate';
+import { evaluateForPlayer, positionWeightsFor } from './evaluate';
 import { hashKey } from './zobrist';
 
 // --- 調整用定数(ADR-002 / perf-estimate に基づく暫定値) --------------------
@@ -103,6 +105,8 @@ export interface EvalOptions {
   timeLimitMs?: number;
   /** 完全読み切替の空きマスしきい値(テスト用に上書き可)。 */
   endgameEmpties?: number;
+  /** 盤面の種類。盤面ごとのレイ/マス重みを選ぶ。未指定はクロス盤(従来互換)。 */
+  variant?: VariantId;
 }
 
 /** 時間切れを伝える例外(反復深化の途中打ち切り用)。 */
@@ -119,6 +123,9 @@ export function evaluatePosition(
 ): PositionEval {
   const start = now();
   const board = rootBoard.slice(); // 破壊しないようコピーして使う
+  const variant: VariantId = options.variant ?? 'cross';
+  const rays = raysFor(variant);
+  const weights = positionWeightsFor(variant);
   const empties = countEmpties(board);
   const endgameThreshold = options.endgameEmpties ?? ENDGAME_EMPTIES;
   const isEndgame = empties <= endgameThreshold;
@@ -128,12 +135,14 @@ export function evaluatePosition(
     (isEndgame ? ENDGAME_TIME_MS : MIDGAME_TIME_MS);
   const deadline = start + timeLimit;
 
-  const moves = legalMoves(board, player);
+  const moves = legalMoves(board, player, rays);
   const ctx: SearchCtx = {
     board,
     tt: new Map<string, TTEntry>(),
     nodes: 0,
     deadline,
+    rays,
+    weights,
   };
 
   // 合法手なし(パス局面)。呼び出し側で扱うが、念のため空で返す。
@@ -206,6 +215,10 @@ interface SearchCtx {
   tt: Map<string, TTEntry>;
   nodes: number;
   deadline: number;
+  /** この盤面の方向レイ(legalMoves/flippedBy 用)。 */
+  rays: number[][][];
+  /** この盤面のマス重み(評価・move ordering 用)。 */
+  weights: ReadonlyArray<number>;
 }
 
 /**
@@ -257,7 +270,7 @@ function rootSearchAllMoves(
 
   for (let i = 0; i < moves.length; i++) {
     const cell = moves[i];
-    const flips = flippedBy(ctx.board, cell, player);
+    const flips = flippedBy(ctx.board, cell, player, ctx.rays);
     makeMoveInPlace(ctx.board, cell, player, flips);
 
     // 相手番から見た値 → 符号反転で player から見た値。
@@ -306,7 +319,7 @@ function negamax(
 
   // 葉条件: 中盤は深さ0、終盤は空きが尽きる(=どちらも打てない)まで。
   if (!endgame && depth <= 0) {
-    return evaluateForPlayer(ctx.board, player);
+    return evaluateForPlayer(ctx.board, player, ctx.rays, ctx.weights);
   }
 
   // 置換表参照。
@@ -321,11 +334,11 @@ function negamax(
   }
   if (tt) ttBest = tt.best;
 
-  const moves = legalMoves(ctx.board, player);
+  const moves = legalMoves(ctx.board, player, ctx.rays);
 
   // パス処理: 自分が打てない場合。
   if (moves.length === 0) {
-    if (!hasLegalMove(ctx.board, opp)) {
+    if (!hasLegalMove(ctx.board, opp, ctx.rays)) {
       // 両者打てない = 終局 → 最終石差を player 視点で返す。
       return finalScoreFor(ctx.board, player);
     }
@@ -342,7 +355,7 @@ function negamax(
   }
 
   // move ordering: 置換表の最善手 → マス重み的な簡易順序。
-  orderMoves(moves, ttBest);
+  orderMoves(moves, ttBest, ctx.weights);
 
   const origAlpha = alpha;
   let best = -Infinity;
@@ -350,7 +363,7 @@ function negamax(
 
   for (let i = 0; i < moves.length; i++) {
     const cell = moves[i];
-    const flips = flippedBy(ctx.board, cell, player);
+    const flips = flippedBy(ctx.board, cell, player, ctx.rays);
     makeMoveInPlace(ctx.board, cell, player, flips);
     const value = -negamax(
       ctx,
@@ -399,8 +412,11 @@ function discDiffFor(board: Board, player: Player): number {
   return player === BLACK ? diff : -diff;
 }
 
-/** move ordering: ttBest を先頭に、その後は中央寄り/重みの高い順の簡易ヒューリスティック。 */
-function orderMoves(moves: number[], ttBest: number): void {
+/**
+ * move ordering: ttBest を先頭に、その後はマス重みの高い順の簡易ヒューリスティック。
+ * 盤面ごとのマス重み(positionWeightsFor)をそのまま流用する。
+ */
+function orderMoves(moves: number[], ttBest: number, weights: ReadonlyArray<number>): void {
   if (ttBest >= 0) {
     const i = moves.indexOf(ttBest);
     if (i > 0) {
@@ -410,31 +426,14 @@ function orderMoves(moves: number[], ttBest: number): void {
       moves[0] = t;
     }
   }
-  // 残り(先頭の ttBest 以外)を ORDER_WEIGHT 降順で安定ソート。
+  // 残り(先頭の ttBest 以外)をマス重み降順で安定ソート。
   const startIdx = ttBest >= 0 && moves[0] === ttBest ? 1 : 0;
   if (moves.length - startIdx > 1) {
     const rest = moves.slice(startIdx);
-    rest.sort((a, b) => ORDER_WEIGHT[b] - ORDER_WEIGHT[a]);
+    rest.sort((a, b) => weights[b] - weights[a]);
     for (let i = 0; i < rest.length; i++) moves[startIdx + i] = rest[i];
   }
 }
-
-/**
- * move ordering 用の簡易マス重み(評価関数の POSITION_WEIGHTS を流用した固定表)。
- * 重複定義を避けつつ、search を evaluate に密結合させないため独立に持つ。
- * ⚠️ evaluate.ts の POSITION_WEIGHTS と意図は同じ(後で統合しても良い)。
- */
-// prettier-ignore
-const ORDER_WEIGHT: ReadonlyArray<number> = [
-   0,   0,  30,  -3,  -3,  30,   0,   0,
-   0,   0, -12,  -2,  -2, -12,   0,   0,
-  30, -12,  16,   1,   1,  16, -12,  30,
-  -3,  -2,   1,   2,   2,   1,  -2,  -3,
-  -3,  -2,   1,   2,   2,   1,  -2,  -3,
-  30, -12,  16,   1,   1,  16, -12,  30,
-   0,   0, -12,  -2,  -2, -12,   0,   0,
-   0,   0,  30,  -3,  -3,  30,   0,   0,
-];
 
 const TT_MAX = 200000; // 置換表の上限(メモリ暴走防止)。
 function storeTT(ctx: SearchCtx, key: string, depth: number, value: number, flag: Flag, best: number): void {

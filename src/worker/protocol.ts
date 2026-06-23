@@ -2,7 +2,7 @@
  * メインスレッド ⇄ 評価 Worker のメッセージ protocol(型定義のみ)。
  */
 
-import type { Player } from '../engine/types';
+import type { Player, VariantId } from '../engine/types';
 import type { MoveEval } from '../engine/search';
 
 /** メイン → Worker: この局面を評価して。 */
@@ -14,6 +14,8 @@ export interface EvalRequest {
   board: number[];
   /** 手番。 */
   player: Player;
+  /** 盤面の種類(盤面ごとのレイ/マス重みを選ぶ)。 */
+  variant: VariantId;
   /** 思考時間上限(ms)。未指定なら Worker 側で段階判定。 */
   timeLimitMs?: number;
 }

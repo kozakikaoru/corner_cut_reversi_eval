@@ -1,19 +1,53 @@
 /**
- * アプリ全体のコントローラ。
- * 画面遷移(先手色選択 → 検討盤)、ゲーム進行、Worker 連携、補助機能をまとめる。
+ * アプリ全体のコントローラ(1画面完結)。
+ *
+ * フェーズ2: 専用の先手色選択画面を廃止し、起動時から検討盤を表示する。
+ * 盤面上部のツールバーで「盤面の種類(通常/クロス/八角/ホロー)」と「先手の色(黒/白)」を
+ * いつでも切り替え可能。切り替えると、その設定で局面を最初からリセットする。
+ *
+ * 既存機能は維持: 評価値表示・3色色分け・1手戻る・リセット・パス自動・終局表示・
+ * 時間切れ復帰・レイアウトシフト対策。
  */
 
-import { type Player, BLACK, WHITE } from '../engine/types';
+import {
+  type Player,
+  type VariantId,
+  BLACK,
+  WHITE,
+  VARIANT_ORDER,
+  BOARD_VARIANTS,
+  DEFAULT_VARIANT,
+  playableCellsFor,
+} from '../engine/types';
 import { GameState } from '../game/gameState';
 import { BoardView } from './boardView';
 import type { MoveEval } from '../engine/search';
 import type { EvalRequest, WorkerOutbound } from '../worker/protocol';
+
+/**
+ * コントロールボタン用のラインアイコン(Tabler 相当)。inline SVG・currentColor 追従。
+ * webfont を足さずにビルド完結させるため、ボタン文字色に同調する SVG を直接埋め込む。
+ */
+// 1手戻る: ti-arrow-back-up 相当
+const ICON_UNDO =
+  '<svg class="ctrl-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" ' +
+  'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-1"/></svg>';
+// リセット: ti-refresh 相当
+const ICON_RESET =
+  '<svg class="ctrl-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" ' +
+  'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M20 11A8 8 0 1 0 18.6 15"/><path d="M20 5v6h-6"/></svg>';
 
 export class App {
   private container: HTMLElement;
 
   private game: GameState | null = null;
   private boardView: BoardView | null = null;
+
+  /** 現在の設定。切り替えで局面をリセットする。 */
+  private variant: VariantId = DEFAULT_VARIANT;
+  private firstPlayer: Player = BLACK;
 
   private worker: Worker;
   /** 最新リクエスト ID。古い結果は破棄する。 */
@@ -24,8 +58,9 @@ export class App {
   // 画面要素の参照(board 画面)。
   private boardEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
-  private engineInfoEl: HTMLElement | null = null;
   private toastEl: HTMLElement | null = null;
+  private variantBtns = new Map<VariantId, HTMLButtonElement>();
+  private colorBtns = new Map<Player, HTMLButtonElement>();
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -43,54 +78,29 @@ export class App {
     this.worker.onmessageerror = () => {
       this.onWorkerFailure('評価結果の受信に失敗しました');
     };
-    this.renderSelectScreen();
-  }
 
-  // ---- 画面: 先手色選択 -----------------------------------------------------
-
-  private renderSelectScreen(): void {
-    this.container.innerHTML = '';
-    const wrap = document.createElement('div');
-    wrap.className = 'screen select-screen';
-
-    wrap.innerHTML = `
-      <h1>変則オセロ 検討盤</h1>
-      <p class="subtitle">四隅が欠けた48マス盤。黒も白も自分で進める研究用ツールです。</p>
-      <p class="prompt">先手はどちらにしますか?</p>
-    `;
-
-    const btns = document.createElement('div');
-    btns.className = 'select-buttons';
-
-    const blackBtn = document.createElement('button');
-    blackBtn.className = 'big-btn select-black';
-    blackBtn.innerHTML = '<span class="disc black"></span> 先手 = 黒';
-    blackBtn.addEventListener('click', () => this.startGame(BLACK));
-
-    const whiteBtn = document.createElement('button');
-    whiteBtn.className = 'big-btn select-white';
-    whiteBtn.innerHTML = '<span class="disc white"></span> 先手 = 白';
-    whiteBtn.addEventListener('click', () => this.startGame(WHITE));
-
-    btns.appendChild(blackBtn);
-    btns.appendChild(whiteBtn);
-    wrap.appendChild(btns);
-    this.container.appendChild(wrap);
-  }
-
-  // ---- 画面: 検討盤 ---------------------------------------------------------
-
-  private startGame(firstPlayer: Player): void {
-    this.game = new GameState(firstPlayer);
-    this.currentEvals = null;
+    // 起動時から検討盤を表示(選択画面なし)。
     this.renderBoardScreen();
-    this.refresh();
+    this.startGame();
   }
+
+  // ---- 画面: 検討盤(1画面) -------------------------------------------------
 
   private renderBoardScreen(): void {
     this.container.innerHTML = '';
+    this.variantBtns.clear();
+    this.colorBtns.clear();
+
     const wrap = document.createElement('div');
     wrap.className = 'screen board-screen';
+
+    // タイトル(コンパクト)。
+    const title = document.createElement('h1');
+    title.className = 'app-title';
+    title.textContent = '異形オセロ評価値計算';
+
+    // 設定ツールバー(盤面の種類 / 先手の色)。
+    const toolbar = this.buildToolbar();
 
     // ステータスバー(手番・石数)。
     this.statusEl = document.createElement('div');
@@ -99,39 +109,144 @@ export class App {
     // 盤面。
     this.boardEl = document.createElement('div');
 
-    // エンジン情報(思考状況・深さ・ノード数)。
-    this.engineInfoEl = document.createElement('div');
-    this.engineInfoEl.className = 'engine-info';
-
-    // コントロール群。
+    // コントロール群(ラインアイコン + テキスト)。
     const controls = document.createElement('div');
     controls.className = 'controls';
-    controls.appendChild(this.makeButton('⏪ 1手戻る', 'btn-undo', () => this.handleUndo()));
-    controls.appendChild(this.makeButton('🔄 リセット', 'btn-reset', () => this.handleReset()));
+    controls.appendChild(
+      this.makeButton(`${ICON_UNDO}<span>1手戻る</span>`, 'btn-undo', () => this.handleUndo()),
+    );
+    controls.appendChild(
+      this.makeButton(`${ICON_RESET}<span>リセット</span>`, 'btn-reset', () => this.handleReset()),
+    );
 
     // トースト(パス通知・終局通知)。
     this.toastEl = document.createElement('div');
     this.toastEl.className = 'toast hidden';
 
+    wrap.appendChild(title);
+    wrap.appendChild(toolbar);
     wrap.appendChild(this.statusEl);
     wrap.appendChild(this.boardEl);
-    wrap.appendChild(this.engineInfoEl);
     wrap.appendChild(controls);
     wrap.appendChild(this.toastEl);
     this.container.appendChild(wrap);
 
-    this.boardView = new BoardView(this.boardEl, (cell) => this.handleCellClick(cell));
+    this.boardView = new BoardView(this.boardEl, this.variant, (cell) => this.handleCellClick(cell));
   }
 
-  private makeButton(label: string, cls: string, onClick: () => void): HTMLButtonElement {
+  /** 設定ツールバー(盤面の種類トグル + 先手色トグル)を組み立てる。 */
+  private buildToolbar(): HTMLElement {
+    const toolbar = document.createElement('div');
+    toolbar.className = 'toolbar';
+
+    // --- 盤面の種類 ---
+    const variantGroup = document.createElement('div');
+    variantGroup.className = 'toolbar-group';
+    const variantLabel = document.createElement('span');
+    variantLabel.className = 'toolbar-label';
+    variantLabel.textContent = '盤面';
+    variantGroup.appendChild(variantLabel);
+
+    const variantSeg = document.createElement('div');
+    variantSeg.className = 'segmented';
+    variantSeg.setAttribute('role', 'group');
+    variantSeg.setAttribute('aria-label', '盤面の種類');
+    for (const id of VARIANT_ORDER) {
+      const btn = document.createElement('button');
+      btn.className = 'seg-btn';
+      btn.type = 'button';
+      btn.textContent = BOARD_VARIANTS[id].label;
+      btn.title = `${BOARD_VARIANTS[id].label}盤(${playableCellsFor(id)}マス)`;
+      btn.addEventListener('click', () => this.handleVariantChange(id));
+      this.variantBtns.set(id, btn);
+      variantSeg.appendChild(btn);
+    }
+    variantGroup.appendChild(variantSeg);
+
+    // --- 先手の色 ---
+    const colorGroup = document.createElement('div');
+    colorGroup.className = 'toolbar-group';
+    const colorLabel = document.createElement('span');
+    colorLabel.className = 'toolbar-label';
+    colorLabel.textContent = '先手';
+    colorGroup.appendChild(colorLabel);
+
+    const colorSeg = document.createElement('div');
+    colorSeg.className = 'segmented';
+    colorSeg.setAttribute('role', 'group');
+    colorSeg.setAttribute('aria-label', '先手の色');
+    const colorDefs: ReadonlyArray<[Player, string]> = [
+      [BLACK, '黒'],
+      [WHITE, '白'],
+    ];
+    for (const [player, label] of colorDefs) {
+      const btn = document.createElement('button');
+      btn.className = 'seg-btn seg-color';
+      btn.type = 'button';
+      btn.innerHTML = `<span class="disc ${player === BLACK ? 'black' : 'white'}"></span>${label}`;
+      btn.addEventListener('click', () => this.handleColorChange(player));
+      this.colorBtns.set(player, btn);
+      colorSeg.appendChild(btn);
+    }
+    colorGroup.appendChild(colorSeg);
+
+    toolbar.appendChild(variantGroup);
+    toolbar.appendChild(colorGroup);
+    return toolbar;
+  }
+
+  /** ツールバーの選択状態(アクティブ表示)を現在の設定に同期。 */
+  private syncToolbar(): void {
+    for (const [id, btn] of this.variantBtns) {
+      btn.classList.toggle('active', id === this.variant);
+      btn.setAttribute('aria-pressed', String(id === this.variant));
+    }
+    for (const [player, btn] of this.colorBtns) {
+      btn.classList.toggle('active', player === this.firstPlayer);
+      btn.setAttribute('aria-pressed', String(player === this.firstPlayer));
+    }
+  }
+
+  /**
+   * コントロールボタンを作る。アイコン(inline SVG)+ テキストを横並びにするため
+   * innerHTML を受け取る。html はこちらで組み立てた信頼できる固定文字列のみ渡す。
+   */
+  private makeButton(html: string, cls: string, onClick: () => void): HTMLButtonElement {
     const b = document.createElement('button');
     b.className = 'ctrl-btn ' + cls;
-    b.textContent = label;
+    b.type = 'button';
+    b.innerHTML = html;
     b.addEventListener('click', onClick);
     return b;
   }
 
-  // ---- 進行ロジック ---------------------------------------------------------
+  // ---- 設定変更ハンドラ -----------------------------------------------------
+
+  private handleVariantChange(variant: VariantId): void {
+    if (variant === this.variant) return; // 同じなら何もしない(リセットしない)。
+    this.variant = variant;
+    // 盤面の欠けマスが変わるのでグリッドを作り直す。
+    this.boardView?.setVariant(variant);
+    this.startGame();
+  }
+
+  private handleColorChange(player: Player): void {
+    if (player === this.firstPlayer) return;
+    this.firstPlayer = player;
+    this.startGame();
+  }
+
+  // ---- ゲーム開始 / 進行ロジック ---------------------------------------------
+
+  /** 現在の設定(variant / firstPlayer)で局面を最初から始める。 */
+  private startGame(): void {
+    this.reqId++; // 進行中の評価を破棄。
+    this.game = new GameState(this.firstPlayer, this.variant);
+    this.currentEvals = null;
+    this.hideToast();
+    this.syncToolbar();
+    this.refresh();
+  }
 
   /**
    * 局面が変わるたびに呼ぶ。
@@ -167,13 +282,13 @@ export class App {
     const player = this.game.getCurrentPlayer();
 
     this.reqId++;
-    this.updateEngineInfo('🧠 評価中…');
 
     const req: EvalRequest = {
       type: 'evaluate',
       reqId: this.reqId,
       board: Array.from(board),
       player,
+      variant: this.variant,
       // timeLimitMs は未指定 → Worker 側で段階(中盤2秒/終盤3秒)を自動判定。
     };
     this.worker.postMessage(req);
@@ -187,37 +302,25 @@ export class App {
     if (res.type === 'error') {
       this.currentEvals = null;
       this.draw();
-      this.updateEngineInfo(`⚠️ 評価エラー(${res.message})`);
       return;
     }
 
     if (res.type !== 'result') return;
 
+    // エンジンの計算自体は継続しているが、深さ/ノード/ms の表示行は廃止したため
+    // 結果(評価値)を盤面に反映するだけにとどめる。
     this.currentEvals = res.moves;
     this.draw();
-
-    let modeLabel: string;
-    if (res.timedOut) {
-      // 時間切れ → 完全読みは間に合わず近似値。誤読防止のため明示する。
-      modeLabel = `⏱️ 時間切れ・暫定評価(深さ ${res.reachedDepth})`;
-    } else if (res.endgame) {
-      modeLabel = `🏁 終盤完全読み(残り${res.reachedDepth}手)`;
-    } else {
-      modeLabel = `深さ ${res.reachedDepth}`;
-    }
-    this.updateEngineInfo(
-      `${modeLabel} / ${res.nodes.toLocaleString()} ノード / ${Math.round(res.elapsedMs)}ms`,
-    );
   }
 
   /**
    * Worker の致命的失敗(onerror / onmessageerror)時のフォールバック。
-   * 「評価中…」のまま固まらないようにし、合法手のクリックは引き続き可能にする。
+   * 評価なしで合法手のクリックは引き続き可能にする(UI が固まらないようにする)。
+   * エンジン情報の表示行は廃止したため、盤面の再描画(評価なし)のみ行う。
    */
-  private onWorkerFailure(message: string): void {
+  private onWorkerFailure(_message: string): void {
     this.currentEvals = null;
     this.draw();
-    this.updateEngineInfo(`⚠️ ${message}(評価なしで続行できます)`);
   }
 
   private handleCellClick(cell: number): void {
@@ -238,12 +341,8 @@ export class App {
   }
 
   private handleReset(): void {
-    // 先手色選択に戻る。
-    this.reqId++; // 進行中の評価を破棄。
-    this.game = null;
-    this.boardView = null;
-    this.currentEvals = null;
-    this.renderSelectScreen();
+    // 現在の設定のまま最初からやり直す(1画面なので選択画面には戻らない)。
+    this.startGame();
   }
 
   // ---- 描画ヘルパ -----------------------------------------------------------
@@ -277,10 +376,6 @@ export class App {
     if (undoBtn && this.game) undoBtn.disabled = !this.game.canUndo();
   }
 
-  private updateEngineInfo(text: string): void {
-    if (this.engineInfoEl) this.engineInfoEl.textContent = text;
-  }
-
   private showEndgame(): void {
     if (!this.game) return;
     const { black, white, winner } = this.game.getResult();
@@ -288,7 +383,6 @@ export class App {
     if (winner === BLACK) msg = `🏁 終局! 黒の勝ち(${black} 対 ${white})`;
     else if (winner === WHITE) msg = `🏁 終局! 白の勝ち(${white} 対 ${black})`;
     else msg = `🏁 終局! 引き分け(${black} 対 ${white})`;
-    this.updateEngineInfo('対局終了');
     this.showToast(msg, true);
   }
 

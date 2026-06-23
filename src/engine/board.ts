@@ -2,15 +2,25 @@
  * 盤面ロジック(純粋関数中心)。
  * - 初期配置 / 合法手生成 / 反転(着手適用) / パス・終局判定 / 石数カウント。
  *
- * 変則盤対応の肝:
+ * 異形盤対応の肝(全盤面共通の仕組み):
  *   欠けマス(BLOCKED)と盤外は、挟みのライン上で「壁」として扱う。
  *   そのため各セルの「方向ごとのレイ(直線上のセル列)」を事前計算し、
  *   ライン生成の時点で盤外・欠けマスを除外しておく(= ライン上に BLOCKED は現れない)。
+ *
+ *   フェーズ2: 欠けマス集合は盤面(VariantId)ごとに異なるため、RAYS テーブルも
+ *   盤面ごとに用意し、VariantId でキャッシュする。ロジック自体は盤面に依存せず、
+ *   「その盤面の RAYS」を渡せばどの盤面でも同じコードで動く。
+ *
+ *   ⚠️ Board(Int8Array)は欠けマスの位置情報を BLOCKED として自身に持つので、
+ *   関数に Board を渡す限り flippedBy/legalMoves 等は RAYS 無しでも EMPTY/BLOCKED を
+ *   見て正しく動く。ただし RAYS による「壁の手前で打ち切り」は高速化と明示性のため
+ *   盤面に整合した RAYS を使う。Board と RAYS の盤面は必ず一致させること。
  */
 
 import {
   type Board,
   type Player,
+  type VariantId,
   BLACK,
   WHITE,
   EMPTY,
@@ -19,8 +29,8 @@ import {
   SIZE,
   PASS,
   idx,
-  isCornerCut,
   opponent,
+  blockedMaskFor,
 } from './types';
 
 /** 8方向(dr, dc)。 */
@@ -34,10 +44,21 @@ const DIRECTIONS: ReadonlyArray<readonly [number, number]> = [
  * RAYS[cell] = 各方向のレイ(そのセルから外側へ向かうセルインデックスの列)。
  * 盤外・欠けマスに当たった時点でそのレイは打ち切る(= 壁の手前まで)。
  * 欠けマス自身を起点とするレイは空(そこには石を置けないので使われない)。
+ *
+ * 盤面ごとに欠けマスが違うので VariantId でキャッシュする。
  */
-const RAYS: number[][][] = buildRays();
+const RAYS_CACHE = new Map<VariantId, number[][][]>();
 
-function buildRays(): number[][][] {
+function raysFor(variant: VariantId): number[][][] {
+  const cached = RAYS_CACHE.get(variant);
+  if (cached) return cached;
+  const rays = buildRays(variant);
+  RAYS_CACHE.set(variant, rays);
+  return rays;
+}
+
+function buildRays(variant: VariantId): number[][][] {
+  const blocked = blockedMaskFor(variant);
   const rays: number[][][] = [];
   for (let cell = 0; cell < CELLS; cell++) {
     const row = Math.floor(cell / SIZE);
@@ -46,11 +67,11 @@ function buildRays(): number[][][] {
     for (const [dr, dc] of DIRECTIONS) {
       const ray: number[] = [];
       // 起点が欠けマスならレイ無し。
-      if (!isCornerCut(row, col)) {
+      if (!blocked[cell]) {
         let r = row + dr;
         let c = col + dc;
         // 盤外 or 欠けマスに当たるまで進む(壁の手前まで)。
-        while (r >= 0 && r < SIZE && c >= 0 && c < SIZE && !isCornerCut(r, c)) {
+        while (r >= 0 && r < SIZE && c >= 0 && c < SIZE && !blocked[idx(r, c)]) {
           ray.push(idx(r, c));
           r += dr;
           c += dc;
@@ -64,24 +85,24 @@ function buildRays(): number[][][] {
 }
 
 /** 空の盤(欠けマスは BLOCKED、それ以外は EMPTY)を作る。 */
-export function createEmptyBoard(): Board {
+export function createEmptyBoard(variant: VariantId): Board {
+  const blocked = blockedMaskFor(variant);
   const b = new Int8Array(CELLS);
   for (let cell = 0; cell < CELLS; cell++) {
-    const row = Math.floor(cell / SIZE);
-    const col = cell % SIZE;
-    b[cell] = isCornerCut(row, col) ? BLOCKED : EMPTY;
+    b[cell] = blocked[cell] ? BLOCKED : EMPTY;
   }
   return b;
 }
 
 /**
- * 初期盤面。中央4マスの交差配置。
- *   通常オセロとは白黒を反転させた配置(本ツールの仕様)。
+ * 初期盤面。中央4マスの交差配置(全盤面共通)。
+ *   通常オセロとは白黒を反転させた配置(本ツールの仕様 / フェーズ1で反転済み)。
  * 0-index の (row,col) では:
  *   黒: (3,3),(4,4) / 白: (3,4),(4,3)
+ * 中央4マスはどの盤面でも欠けないため、全盤面で同じ初期配置になる。
  */
-export function createInitialBoard(): Board {
-  const b = createEmptyBoard();
+export function createInitialBoard(variant: VariantId): Board {
+  const b = createEmptyBoard(variant);
   b[idx(3, 3)] = BLACK;
   b[idx(4, 4)] = BLACK;
   b[idx(3, 4)] = WHITE;
@@ -98,11 +119,11 @@ export function cloneBoard(board: Board): Board {
  * あるセルに player が着手したとき、反転する石のセル列を返す。
  * 1つも返らない(= 反転0)なら、その手は非合法。
  */
-export function flippedBy(board: Board, cell: number, player: Player): number[] {
+export function flippedBy(board: Board, cell: number, player: Player, rays: number[][][]): number[] {
   if (board[cell] !== EMPTY) return [];
   const opp = opponent(player);
   const flips: number[] = [];
-  const dirs = RAYS[cell];
+  const dirs = rays[cell];
   for (let d = 0; d < dirs.length; d++) {
     const ray = dirs[d];
     const lineFlips: number[] = [];
@@ -128,10 +149,10 @@ export function flippedBy(board: Board, cell: number, player: Player): number[] 
 }
 
 /** その手が合法か(1つ以上反転できるか)。 */
-export function isLegalMove(board: Board, cell: number, player: Player): boolean {
+export function isLegalMove(board: Board, cell: number, player: Player, rays: number[][][]): boolean {
   if (board[cell] !== EMPTY) return false;
   const opp = opponent(player);
-  const dirs = RAYS[cell];
+  const dirs = rays[cell];
   for (let d = 0; d < dirs.length; d++) {
     const ray = dirs[d];
     let sawOpp = false;
@@ -151,10 +172,10 @@ export function isLegalMove(board: Board, cell: number, player: Player): boolean
 }
 
 /** player の全合法手(セルインデックスの配列)。 */
-export function legalMoves(board: Board, player: Player): number[] {
+export function legalMoves(board: Board, player: Player, rays: number[][][]): number[] {
   const moves: number[] = [];
   for (let cell = 0; cell < CELLS; cell++) {
-    if (board[cell] === EMPTY && isLegalMove(board, cell, player)) {
+    if (board[cell] === EMPTY && isLegalMove(board, cell, player, rays)) {
       moves.push(cell);
     }
   }
@@ -162,9 +183,9 @@ export function legalMoves(board: Board, player: Player): number[] {
 }
 
 /** player に合法手があるか(legalMoves より軽い早期 return 版)。 */
-export function hasLegalMove(board: Board, player: Player): boolean {
+export function hasLegalMove(board: Board, player: Player, rays: number[][][]): boolean {
   for (let cell = 0; cell < CELLS; cell++) {
-    if (board[cell] === EMPTY && isLegalMove(board, cell, player)) {
+    if (board[cell] === EMPTY && isLegalMove(board, cell, player, rays)) {
       return true;
     }
   }
@@ -175,8 +196,8 @@ export function hasLegalMove(board: Board, player: Player): boolean {
  * 着手を適用した「新しい盤面」を返す(元盤面は破壊しない)。
  * 非合法手の場合は null。
  */
-export function applyMove(board: Board, cell: number, player: Player): Board | null {
-  const flips = flippedBy(board, cell, player);
+export function applyMove(board: Board, cell: number, player: Player, rays: number[][][]): Board | null {
+  const flips = flippedBy(board, cell, player, rays);
   if (flips.length === 0) return null;
   const next = cloneBoard(board);
   next[cell] = player;
@@ -225,8 +246,8 @@ export function countEmpties(board: Board): number {
 }
 
 /** 終局か(両者とも合法手が無い)。 */
-export function isGameOver(board: Board): boolean {
-  return !hasLegalMove(board, BLACK) && !hasLegalMove(board, WHITE);
+export function isGameOver(board: Board, rays: number[][][]): boolean {
+  return !hasLegalMove(board, BLACK, rays) && !hasLegalMove(board, WHITE, rays);
 }
 
-export { PASS };
+export { PASS, raysFor };

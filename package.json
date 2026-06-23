@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "四隅が欠けた変則盤面オセロ(48マス)の検討盤・評価値表示アプリ",
+  "description": "四隅が欠けた異形盤面オセロ(48マス)の検討盤・評価値表示アプリ",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

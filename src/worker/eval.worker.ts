@@ -17,6 +17,7 @@ self.onmessage = (e: MessageEvent<WorkerInbound>) => {
     const board = Int8Array.from(msg.board);
     const result = evaluatePosition(board, msg.player, {
       timeLimitMs: msg.timeLimitMs,
+      variant: msg.variant,
     });
 
     const response: EvalResponse = {
