@@ -1,0 +1,111 @@
+/**
+ * 盤面の描画(DOM)。
+ * - 8×8 グリッド。四隅2×2は "blocked"(盤外スタイル、クリック無効)。
+ * - 石(黒/白)を描画。
+ * - 合法手セルに評価値オーバーレイ(数値 + 3色)。最善手は強調。
+ * - 合法手セルのクリックでコールバック。
+ */
+
+import {
+  type Board,
+  CELLS,
+  SIZE,
+  BLACK,
+  WHITE,
+  BLOCKED,
+  isCornerCut,
+} from '../engine/types';
+import type { MoveEval } from '../engine/search';
+import { classifyMoves, formatEvalValue, type EvalClass } from './evalColor';
+
+export class BoardView {
+  private root: HTMLElement;
+  private cells: HTMLElement[] = [];
+  private onCellClick: (cell: number) => void;
+
+  constructor(root: HTMLElement, onCellClick: (cell: number) => void) {
+    this.root = root;
+    this.onCellClick = onCellClick;
+    this.build();
+  }
+
+  private build(): void {
+    this.root.innerHTML = '';
+    this.root.classList.add('board');
+    this.cells = [];
+    for (let cell = 0; cell < CELLS; cell++) {
+      const row = Math.floor(cell / SIZE);
+      const col = cell % SIZE;
+      const el = document.createElement('div');
+      el.className = 'cell';
+      el.dataset.cell = String(cell);
+      if (isCornerCut(row, col)) {
+        el.classList.add('blocked');
+      } else {
+        el.addEventListener('click', () => this.handleClick(cell));
+      }
+      this.cells.push(el);
+      this.root.appendChild(el);
+    }
+  }
+
+  private handleClick(cell: number): void {
+    // 合法手のみ反応(legal クラスが付いているセル)。
+    if (this.cells[cell].classList.contains('legal')) {
+      this.onCellClick(cell);
+    }
+  }
+
+  /**
+   * 盤面を再描画する。
+   * @param board 現在の盤面
+   * @param legalMoves 合法手のセル一覧(評価待ちでも先にハイライトできる)
+   * @param evals 各合法手の評価値(未計算なら null)
+   */
+  render(board: Board, legalMoves: number[], evals: MoveEval[] | null): void {
+    const legalSet = new Set(legalMoves);
+    const classes: Map<number, EvalClass> = evals ? classifyMoves(evals) : new Map();
+    const evalByCell = new Map<number, MoveEval>();
+    if (evals) for (const e of evals) evalByCell.set(e.cell, e);
+
+    for (let cell = 0; cell < CELLS; cell++) {
+      const el = this.cells[cell];
+      const v = board[cell];
+
+      // クラスをリセット(blocked は保持)。
+      const blocked = el.classList.contains('blocked');
+      el.className = 'cell' + (blocked ? ' blocked' : '');
+      el.textContent = '';
+      el.removeAttribute('title');
+
+      if (v === BLOCKED) continue;
+
+      if (v === BLACK || v === WHITE) {
+        const stone = document.createElement('div');
+        stone.className = 'stone ' + (v === BLACK ? 'black' : 'white');
+        el.appendChild(stone);
+        continue;
+      }
+
+      // EMPTY: 合法手なら評価値オーバーレイ。
+      if (legalSet.has(cell)) {
+        el.classList.add('legal');
+        const ev = evalByCell.get(cell);
+        if (ev) {
+          const cls = classes.get(cell) ?? 'good';
+          el.classList.add('eval-' + cls);
+          const label = document.createElement('span');
+          label.className = 'eval-label';
+          label.textContent = formatEvalValue(ev.value, ev.exact);
+          el.appendChild(label);
+          el.title = ev.exact
+            ? `確定最終石差 ${formatEvalValue(ev.value, true)}`
+            : `評価値(目安) ${formatEvalValue(ev.value, false)}`;
+        } else {
+          // 評価待ち: ハイライトのみ。
+          el.classList.add('eval-pending');
+        }
+      }
+    }
+  }
+}

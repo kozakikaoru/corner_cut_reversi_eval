@@ -1,0 +1,10 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+.vite
+scripts/.engine-check.mjs
+
+# 端末固有のプレビュー起動設定(Nodeの絶対パスを含む)
+.claude/

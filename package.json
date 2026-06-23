@@ -1,0 +1,18 @@
+{
+  "name": "corner-cut-reversi-eval",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "四隅が欠けた変則盤面オセロ(48マス)の検討盤・評価値表示アプリ",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "check:engine": "esbuild scripts/engine-check.ts --bundle --platform=node --format=esm --outfile=scripts/.engine-check.mjs && node scripts/.engine-check.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11"
+  }
+}

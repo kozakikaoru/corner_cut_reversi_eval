@@ -1,0 +1,319 @@
+/* ------------------------------------------------------------------ *
+ * 変則オセロ 検討盤 スタイル
+ * 配色は CSS 変数で集中管理(後でテーマ調整しやすく)。
+ * ------------------------------------------------------------------ */
+
+:root {
+  --bg: #1f2730;
+  --panel: #28323d;
+  --board-bg: #1d6b3f;     /* 盤の緑 */
+  --board-line: #14502f;
+  --cell-empty: #2f8d57;
+  --blocked-bg: #161b21;   /* 欠けマス(盤外)*/
+  --stone-black: #16191d;
+  --stone-white: #f4f6f8;
+  --text: #e8edf2;
+  --text-dim: #9fb0bf;
+
+  /* 評価値の3色 */
+  --best-bg: #2563eb;          /* 最善手: 青 */
+  --best-glow: #7cb0ff;
+  --good-bg: #1f9d55;          /* 善手: 緑 */
+  --bad-bg: #c0392b;           /* 悪手: 赤 */
+
+  --legal-ring: rgba(255, 255, 255, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+
+#app {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 24px 16px 48px;
+}
+
+.screen {
+  width: 100%;
+  max-width: 560px;
+}
+
+/* ---- 先手色選択画面 ---- */
+
+.select-screen {
+  text-align: center;
+  padding-top: 8vh;
+}
+
+.select-screen h1 {
+  font-size: 28px;
+  margin-bottom: 8px;
+}
+
+.subtitle {
+  color: var(--text-dim);
+  margin: 0 auto 32px;
+  max-width: 420px;
+  line-height: 1.6;
+}
+
+.prompt {
+  font-size: 18px;
+  margin-bottom: 20px;
+}
+
+.select-buttons {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.big-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  padding: 16px 28px;
+  border-radius: 12px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  background: var(--panel);
+  color: var(--text);
+  transition: transform 0.08s ease, border-color 0.15s ease;
+}
+
+.big-btn:hover {
+  transform: translateY(-2px);
+  border-color: var(--best-glow);
+}
+
+.select-black { border-color: #444; }
+.select-white { border-color: #aaa; }
+
+/* ---- 検討盤画面 ---- */
+
+.board-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 10px 16px;
+}
+
+.score {
+  display: flex;
+  gap: 18px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.score-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.turn {
+  font-size: 16px;
+  color: var(--text-dim);
+}
+
+.turn strong {
+  color: var(--text);
+  font-size: 18px;
+}
+
+/* 小さな石アイコン(スコア・ボタン用) */
+.disc {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.disc.black { background: var(--stone-black); border: 1px solid #555; }
+.disc.white { background: var(--stone-white); border: 1px solid #ccc; }
+
+/* ---- 盤面グリッド ---- */
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-rows: repeat(8, minmax(0, 1fr));
+  gap: 3px;
+  background: var(--board-line);
+  padding: 6px;
+  border-radius: 8px;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+}
+
+.cell {
+  position: relative;
+  background: var(--cell-empty);
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  min-width: 0;
+  min-height: 0;
+  aspect-ratio: 1 / 1;
+}
+
+/* 欠けマス(盤外) */
+.cell.blocked {
+  background: var(--blocked-bg);
+  cursor: default;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+/* 合法手セル */
+.cell.legal {
+  cursor: pointer;
+  box-shadow: inset 0 0 0 2px var(--legal-ring);
+}
+
+.cell.eval-pending::after {
+  /* 評価待ちの小さなドット */
+  content: "";
+  width: 26%;
+  height: 26%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* 石 */
+.stone {
+  width: 78%;
+  height: 78%;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+.stone.black {
+  background: radial-gradient(circle at 35% 30%, #3a3f45, var(--stone-black));
+}
+.stone.white {
+  background: radial-gradient(circle at 35% 30%, #ffffff, #d4d9de);
+}
+
+/* 評価値オーバーレイ */
+.eval-label {
+  font-weight: 700;
+  font-size: clamp(12px, 3.4vw, 20px);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  z-index: 1;
+}
+
+/* 合法手セルの色分け(背景の円で表現) */
+.cell.eval-best,
+.cell.eval-good,
+.cell.eval-bad {
+  cursor: pointer;
+}
+
+.cell.eval-best::before,
+.cell.eval-good::before,
+.cell.eval-bad::before {
+  content: "";
+  position: absolute;
+  inset: 12%;
+  border-radius: 50%;
+}
+
+.cell.eval-good::before { background: var(--good-bg); }
+.cell.eval-bad::before  { background: var(--bad-bg); }
+
+/* 最善手: 目立つ色 + 光る枠 */
+.cell.eval-best::before {
+  background: var(--best-bg);
+  box-shadow:
+    0 0 0 3px var(--best-glow),
+    0 0 12px 2px var(--best-glow);
+  animation: bestPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes bestPulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--best-glow), 0 0 10px 1px var(--best-glow); }
+  50%      { box-shadow: 0 0 0 3px var(--best-glow), 0 0 18px 5px var(--best-glow); }
+}
+
+/* ---- エンジン情報 ---- */
+
+.engine-info {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  min-height: 18px;
+}
+
+/* ---- コントロール ---- */
+
+.controls {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.ctrl-btn {
+  font-size: 15px;
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 1px solid #3a4754;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.ctrl-btn:hover:not(:disabled) {
+  background: #33414e;
+}
+
+.ctrl-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---- トースト(パス/終局通知) ---- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  transform: translateX(-50%);
+  background: #0f1419;
+  color: var(--text);
+  border: 1px solid #3a4754;
+  border-radius: 10px;
+  padding: 12px 20px;
+  font-size: 15px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  max-width: 90vw;
+  text-align: center;
+  z-index: 10;
+}
+
+.toast.hidden {
+  display: none;
+}
