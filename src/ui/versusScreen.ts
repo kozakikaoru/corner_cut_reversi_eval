@@ -42,7 +42,7 @@ import {
 } from '../game/scoring';
 import type { VersusConfig, VersusVariantChoice } from '../game/versusConfig';
 import { BoardView } from './boardView';
-import { ICON_BACK, ICON_EVAL, ICON_SWORDS } from './icons';
+import { ICON_BACK, ICON_EVAL, ICON_RESET, ICON_SWORDS } from './icons';
 import type { MoveEval } from '../engine/search';
 
 /**
@@ -280,6 +280,13 @@ export class VersusScreen {
     this.advance();
   }
 
+  /** 「やり直す」: 今の対局を同じ設定(盤面・手番の色)のまま初めから。 */
+  private restartGame(): void {
+    if (!this.config) return;
+    if (!window.confirm('今の対局を初めからやり直しますか?')) return;
+    this.beginGameFromConfig();
+  }
+
   private renderGame(): void {
     if (!this.config) return;
     this.container.innerHTML = '';
@@ -333,6 +340,14 @@ export class VersusScreen {
     this.evalToggleBtn.addEventListener('click', () => this.toggleEvals());
     this.syncEvalToggleLabel();
     controls.appendChild(this.evalToggleBtn);
+
+    // 初めからやり直す(同じ設定=盤面・手番の色のまま盤面をリセット)。
+    const restartBtn = document.createElement('button');
+    restartBtn.className = 'ctrl-btn btn-restart';
+    restartBtn.type = 'button';
+    restartBtn.innerHTML = `${ICON_RESET}<span>やり直す</span>`;
+    restartBtn.addEventListener('click', () => this.restartGame());
+    controls.appendChild(restartBtn);
 
     // トースト(パス・終局通知)。
     this.toastEl = document.createElement('div');
