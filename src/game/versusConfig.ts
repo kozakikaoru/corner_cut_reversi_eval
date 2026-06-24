@@ -1,14 +1,14 @@
 /**
- * 対戦モードの設定型(対戦前設定 → 対局 → 結果 で共有)。
+ * 対局モードの設定型(対局前設定 → 対局 → 結果 で共有)。
  */
 
 import type { Player, VariantId } from '../engine/types';
 import type { AiLevelId } from './ai';
 
-/** 対戦前設定で選ぶ盤面候補(ランダムは選択時に実盤面へ解決する)。 */
+/** 対局前設定で選ぶ盤面候補(ランダムは選択時に実盤面へ解決する)。 */
 export type VersusVariantChoice = VariantId | 'random';
 
-/** 対戦の確定設定(対局開始時に解決済み)。 */
+/** 対局の確定設定(対局開始時に解決済み)。 */
 export interface VersusConfig {
   /** 実際にプレイする盤面(random は開始時に解決済み)。 */
   variant: VariantId;

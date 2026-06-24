@@ -11,7 +11,7 @@
  *   小さい平均 regret / 高い一致率ほど、評価関数が「良い手」を選べている。
  *
  * 手順:
- *   1. 各盤面で、ランダム自己対戦を回して「空き E マス」の局面を N 個生成(シード固定=再現可能)。
+ *   1. 各盤面で、ランダム自己対局を回して「空き E マス」の局面を N 個生成(シード固定=再現可能)。
  *   2. 各局面を完全読み(endgameEmpties を大きくして強制)→ 各手の確定石差(正解)を得る。
  *   3. 同じ局面を中盤評価の固定深さ探索(endgameEmpties=0, maxDepth=D)で解かせ、選んだ手の
  *      regret を厳密解から引く。D=1(ほぼ評価関数そのもの)と D=2 で測る。
@@ -65,7 +65,7 @@ interface Pos {
   player: Player;
 }
 
-/** ランダム自己対戦で「空き E・手番側に合法手あり」の局面を N 個作る。 */
+/** ランダム自己対局で「空き E・手番側に合法手あり」の局面を N 個作る。 */
 function genPositions(variant: VariantId, e: number, n: number): Pos[] {
   const rays = raysFor(variant);
   const out: Pos[] = [];

@@ -54,7 +54,7 @@ export class EvalScreen {
     this.container = container;
     this.onBack = onBack;
 
-    // 対戦モードと同じ EvalClient(reqId 多重化 + Promise ラッパー + onerror/
+    // 対局モードと同じ EvalClient(reqId 多重化 + Promise ラッパー + onerror/
     // onmessageerror での reject)を共用する。検討盤は「最新リクエストのみ反映」
     // なので、世代カウンタ(this.reqId)で古い Promise の結果を破棄する。
     this.client = new EvalClient();

@@ -1,11 +1,11 @@
 /**
- * 新旧評価関数の「強さ」A/B 自己対戦(開発用 / ビルド外)。
+ * 新旧評価関数の「強さ」A/B 自己対局(開発用 / ビルド外)。
  *
  * 評価関数の良し悪しは最終的に「強いかどうか」。そこで新評価(本番既定)と旧評価を
- * 同じ探索エンジンに差し込み、全局面(中盤含む)を打たせて直接対戦させ勝率を測る。
+ * 同じ探索エンジンに差し込み、全局面(中盤含む)を打たせて直接対局させ勝率を測る。
  *
  * 公平化:
- *   - 各対戦は同じ序盤(ランダム K 手)から、色を入れ替えて 2 局打つ(先手有利を相殺)。
+ *   - 各対局は同じ序盤(ランダム K 手)から、色を入れ替えて 2 局打つ(先手有利を相殺)。
  *   - 中盤は固定深さ(maxDepth=D)で両者同条件。終盤(空き<=EE)は両者とも完全読み=互角。
  *     つまり勝敗差は「中盤評価の質」だけで決まる。
  *   - 序盤ランダムはシード固定=再現可能。
@@ -46,7 +46,7 @@ function mulberry32(seed: number): () => number {
 }
 
 const SEED = 0x1234abcd;
-const PAIRS = Number.parseInt(process.argv[2] ?? '15', 10); // 盤面ごとの対戦ペア数(×2局)
+const PAIRS = Number.parseInt(process.argv[2] ?? '15', 10); // 盤面ごとの対局ペア数(×2局)
 const DEPTH = Number.parseInt(process.argv[3] ?? '6', 10); // 中盤の固定探索深さ
 const EE = Number.parseInt(process.argv[4] ?? '8', 10); // 終盤完全読みの空きしきい値
 const OPENING_PLIES = 6; // 序盤ランダム手数
@@ -138,7 +138,7 @@ function scoreGame(finalBoard: Board, newColor: Player, t: Tally): void {
 }
 
 console.log(
-  `=== 新旧評価 自己対戦 A/B(盤面ごと${PAIRS}ペア×2局 / 中盤深さ${DEPTH} / 終盤完全読み<=${EE} / seed=${SEED.toString(16)}) ===`,
+  `=== 新旧評価 自己対局 A/B(盤面ごと${PAIRS}ペア×2局 / 中盤深さ${DEPTH} / 終盤完全読み<=${EE} / seed=${SEED.toString(16)}) ===`,
 );
 console.log('NEW=精度改善版(既定) vs OLD=改善前。勝率 = (勝+0.5*分)/局数。50%超で NEW が強い。\n');
 

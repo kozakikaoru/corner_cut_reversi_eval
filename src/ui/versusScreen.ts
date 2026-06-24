@@ -1,14 +1,14 @@
 /**
- * 対戦モード画面(設定 → 対局 → 結果 の 3 サブ画面を内包)。
+ * 対局モード画面(設定 → 対局 → 結果 の 3 サブ画面を内包)。
  *
  * versus_mode.md の流れ:
- *  1. 対戦前設定: 盤面(通常/クロス/八角/ホロー/ランダム)・AI 強さ(5段階)を選ぶ。
+ *  1. 対局前設定: 盤面(通常/クロス/八角/ホロー/ランダム)・AI 強さ(5段階)を選ぶ。
  *  2. 対局開始: 先手は黒固定。プレイヤーの色はランダム決定。
  *  3. 進行: プレイヤー手番はクリック着手 / AI 手番は AI が着手(思考演出つき)。
  *     パス自動・終局は GameState を流用。
  *  4. AI 思考演出: 0.6〜1.5 秒(強さで可変)の「間」+「AI思考中…」ドットアニメ。
  *     プレイヤー手番は「あなたの番です」。
- *  5. 対局後: 結果画面(勝敗 + プレイ採点)→ TOP / 対戦メニュー / もう1戦。
+ *  5. 対局後: 結果画面(勝敗 + プレイ採点)→ TOP / 対局メニュー / もう1戦。
  *
  * 採点(全部入り):
  *  - 評価値表示トグル: 現手番の全合法手評価を 3色リングで盤面表示(検討盤と同じ見せ方)。
@@ -136,7 +136,7 @@ export class VersusScreen {
   }
 
   // =========================================================================
-  // 1) 対戦前設定画面
+  // 1) 対局前設定画面
   // =========================================================================
 
   private renderSetup(): void {
@@ -146,7 +146,7 @@ export class VersusScreen {
     wrap.className = 'screen versus-setup';
 
     // 上部バー(戻る + タイトル)。
-    wrap.appendChild(this.buildTopbar('対戦モード', () => this.nav.toMenu()));
+    wrap.appendChild(this.buildTopbar('対局モード', () => this.nav.toMenu()));
 
     // --- 盤面選択 ---
     const boardSection = document.createElement('section');
@@ -295,7 +295,7 @@ export class VersusScreen {
     const wrap = document.createElement('div');
     wrap.className = 'screen versus-game';
 
-    // 上部バー(投了=メニューへ + 対戦情報)。
+    // 上部バー(投了=メニューへ + 対局情報)。
     const lv = aiLevelById(this.config.aiLevel);
     const topbar = document.createElement('div');
     topbar.className = 'screen-topbar versus-topbar';
@@ -730,14 +730,14 @@ export class VersusScreen {
     // プレイ採点カード。
     const scoreCard = this.buildScoreCard(play);
 
-    // 導線(TOP / 対戦メニュー / もう1戦)。
+    // 導線(TOP / 対局メニュー / もう1戦)。
     const actions = document.createElement('div');
     actions.className = 'result-actions';
     actions.appendChild(
       this.actionButton('もう1戦', 'primary-btn', () => this.rematch()),
     );
     actions.appendChild(
-      this.actionButton('対戦メニュー', 'ghost-btn', () => this.renderSetup()),
+      this.actionButton('対局メニュー', 'ghost-btn', () => this.renderSetup()),
     );
     actions.appendChild(
       this.actionButton('TOPに戻る', 'ghost-btn', () => this.nav.toMenu()),

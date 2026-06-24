@@ -2,7 +2,7 @@
  * メニュー画面(アプリのトップ)。
  *
  * versus_mode.md: アプリ名「異形オセロシミュレーター」。
- * 「対戦モード」「評価値計算モード」の 2 択を大きなカードで提示する。案B(ネオンダーク)トーン。
+ * 「対局モード」「評価値計算モード」の 2 択を大きなカードで提示する。案B(ネオンダーク)トーン。
  */
 
 import { ICON_SWORDS, ICON_ANALYZE } from './icons';
@@ -46,7 +46,7 @@ export class MenuScreen {
       this.makeCard(
         'menu-card-versus',
         ICON_SWORDS,
-        '対戦モード',
+        '対局モード',
         'AIと対局。5段階の強さ + あなたのプレイを採点',
         onVersus,
       ),
