@@ -365,8 +365,8 @@ console.log('=== G. 時間切れフォールバック(クロス盤) ===');
 // ===========================================================================
 console.log('=== H. 対戦AI(6段階・着手選択) ===');
 {
-  // H-1. レベル定義の健全性: 6 段階 / バーサーカーは特別・最善厳守。
-  check('AI: レベルは6段階', AI_LEVELS.length === 6);
+  // H-1. レベル定義の健全性: 5 段階(初級/中級/上級/超級/バーサーカー)/ バーサーカーは特別・最善厳守。
+  check('AI: レベルは5段階', AI_LEVELS.length === 5);
   check('AI: バーサーカーが1つだけ special', AI_LEVELS.filter((l) => l.special).length === 1);
   const berserker = aiLevelById('berserker');
   check('AI: バーサーカーは最善厳守(mistakeRate=0)', berserker.mistakeRate === 0);
@@ -389,9 +389,9 @@ console.log('=== H. 対戦AI(6段階・着手選択) ===');
     for (let i = 1; i < nonSpecial.length; i++) {
       if (!((nonSpecial[i].maxDepth ?? 0) >= (nonSpecial[i - 1].maxDepth ?? 0))) depthMonotonic = false;
     }
-    check('AI: Lv1〜5 の読み深さが単調非減少', depthMonotonic);
-    check('AI: 弱レベル(Lv1〜3)は終盤完全読みOFF', aiLevelById(1).endgameEmpties === 0 && aiLevelById(2).endgameEmpties === 0 && aiLevelById(3).endgameEmpties === 0);
-    check('AI: 最弱(Lv1,2)は枚数貪欲評価', aiLevelById(1).evalMode === 'greedy' && aiLevelById(2).evalMode === 'greedy');
+    check('AI: 非special(初級〜超級)の読み深さが単調非減少', depthMonotonic);
+    check('AI: 初級〜上級は終盤完全読みOFF', aiLevelById(1).endgameEmpties === 0 && aiLevelById(2).endgameEmpties === 0 && aiLevelById(3).endgameEmpties === 0);
+    check('AI: 最弱(初級)は枚数貪欲・中級以上は精度評価', aiLevelById(1).evalMode === 'greedy' && aiLevelById(2).evalMode === 'full');
   }
 
   // H-3. 着手選択: テスト用の手集合(value 降順が明確)。

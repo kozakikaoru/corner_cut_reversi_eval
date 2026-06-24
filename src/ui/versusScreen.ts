@@ -75,7 +75,7 @@ export class VersusScreen {
   // ---- 設定画面の選択状態 ----
   private setup: SetupChoice = {
     variant: 'random',
-    aiLevel: AI_LEVELS[2], // 既定: Lv.3 中級
+    aiLevel: AI_LEVELS[1], // 既定: 中級
   };
 
   // ---- 対局状態 ----

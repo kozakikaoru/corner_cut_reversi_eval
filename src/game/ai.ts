@@ -20,8 +20,8 @@
 
 import type { MoveEval, EvalMode } from '../engine/search';
 
-/** AI 強さレベル ID。1..5 + 'berserker'。 */
-export type AiLevelId = 1 | 2 | 3 | 4 | 5 | 'berserker';
+/** AI 強さレベル ID。1..4(初級〜超級)+ 'berserker'。 */
+export type AiLevelId = 1 | 2 | 3 | 4 | 'berserker';
 
 /** ミス時の候補の選び方。'all'=全合法手から / 'topK'=評価上位 K 手から。 */
 export type AiPickFrom = 'all' | 'topK';
@@ -65,15 +65,16 @@ export interface AiLevel {
 }
 
 /**
- * 6 段階の定義(2026-06-24 リバランス)。
+ * 5 段階の定義(2026-06-24 リバランス)。初級 / 中級 / 上級 / 超級 / バーサーカー。
  * 弱: greedy 評価 + 浅い読み + 完全読みなし + 高ミス率 → 初心者が気持ちよく勝てる。
  * 強: full 評価 + 深い読み + 完全読み + 低ミス率 → 上達しないと勝てない。
+ * 強さ間隔は自己対戦(scripts/ai-ladder.ts)で人間プロキシの勝率を見て較正。
  */
 export const AI_LEVELS: readonly AiLevel[] = [
   {
     id: 1,
-    label: 'Lv.1 ビギナー',
-    desc: '枚数を取るだけ・浅い読み。初心者でも勝てる',
+    label: '初級',
+    desc: '枚数を取るだけ・浅い読み。気軽に勝てる',
     special: false,
     maxDepth: 1,
     endgameEmpties: 0,
@@ -85,20 +86,7 @@ export const AI_LEVELS: readonly AiLevel[] = [
   },
   {
     id: 2,
-    label: 'Lv.2 かけだし',
-    desc: '少し読むが大局観なし・よくミスする',
-    special: false,
-    maxDepth: 2,
-    endgameEmpties: 0,
-    evalMode: 'greedy',
-    mistakeRate: 0.30,
-    pickFrom: 'topK',
-    topK: 4,
-    thinkDelayMs: [450, 800],
-  },
-  {
-    id: 3,
-    label: 'Lv.3 中級',
+    label: '中級',
     desc: '角や辺を意識する・たまにミスする',
     special: false,
     maxDepth: 2,
@@ -107,33 +95,33 @@ export const AI_LEVELS: readonly AiLevel[] = [
     mistakeRate: 0.26,
     pickFrom: 'topK',
     topK: 4,
-    thinkDelayMs: [600, 1000],
+    thinkDelayMs: [550, 950],
+  },
+  {
+    id: 3,
+    label: '上級',
+    desc: 'しっかり読む・好手で対抗しないと勝てない',
+    special: false,
+    maxDepth: 3,
+    endgameEmpties: 0,
+    evalMode: 'full',
+    mistakeRate: 0.20,
+    pickFrom: 'topK',
+    topK: 3,
+    thinkDelayMs: [700, 1150],
   },
   {
     id: 4,
-    label: 'Lv.4 上級',
-    desc: 'しっかり読む・好手で対抗しないと勝てない',
+    label: '超級',
+    desc: '深く読む・滅多にミスしない',
     special: false,
     maxDepth: 4,
     endgameEmpties: 6,
     evalMode: 'full',
-    mistakeRate: 0.16,
-    pickFrom: 'topK',
-    topK: 3,
-    thinkDelayMs: [700, 1200],
-  },
-  {
-    id: 5,
-    label: 'Lv.5 エキスパート',
-    desc: '深く読む・滅多にミスしない',
-    special: false,
-    maxDepth: 8,
-    endgameEmpties: 14,
-    evalMode: 'full',
-    mistakeRate: 0.03,
+    mistakeRate: 0.12,
     pickFrom: 'topK',
     topK: 2,
-    thinkDelayMs: [800, 1400],
+    thinkDelayMs: [800, 1300],
   },
   {
     id: 'berserker',
@@ -163,7 +151,7 @@ export function aiLevelById(id: AiLevelId): AiLevel {
  * モデル(2 段構え):
  *   - 確率 (1 - mistakeRate) で最善手。
  *   - 確率 mistakeRate で「候補」から 1 つ抽選(=人間らしいブレ)。候補は:
- *       pickFrom='all'  → 全合法手から一様(Lv1 のみ。初心者の暴発を再現)。
+ *       pickFrom='all'  → 全合法手から一様(最弱=初級のみ。初心者の暴発を再現)。
  *       pickFrom='topK' → 評価上位 K 手から一様(「正しい方向だが最善でない」ミス)。
  *   ※ 評価の弱さ(evalMode='greedy' 等)・読みの浅さは別途エンジン側で効かせる。
  *     ここはあくまで「与えられた評価の中でどうブレるか」を担う。
