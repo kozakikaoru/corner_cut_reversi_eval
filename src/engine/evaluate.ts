@@ -200,3 +200,28 @@ export function evaluateForPlayer(
     W_DISC * discScore
   );
 }
+
+/**
+ * 枚数貪欲(greedy)評価: 石数差だけを返す(大きいほど player に有利)。
+ *
+ * オセロでは「枚数最大化」は最弱クラスの戦略(本質価値は機動力・確定石にあるため、
+ * 中盤で石が多い側はむしろ打てる手が減り不利になりやすい)。かつ初心者が実際にやる
+ * 思考そのものなので、弱レベル AI に使うと「本当に弱く・人間らしい」相手になる。
+ * シグネチャは Evaluator.score と揃える(rays/weights は未使用)。
+ */
+export function greedyEvaluateForPlayer(
+  board: Board,
+  player: Player,
+  _rays: number[][][],
+  _weights: ReadonlyArray<number>,
+): number {
+  let myDiscs = 0;
+  let oppDiscs = 0;
+  for (let cell = 0; cell < CELLS; cell++) {
+    const v = board[cell];
+    if (v === EMPTY || v === BLOCKED) continue;
+    if (v === player) myDiscs++;
+    else oppDiscs++;
+  }
+  return myDiscs - oppDiscs;
+}

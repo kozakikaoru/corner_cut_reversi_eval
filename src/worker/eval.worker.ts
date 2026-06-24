@@ -3,7 +3,7 @@
  * メインスレッドからの最新リクエストのみ処理(古い reqId の結果は UI 側で破棄)。
  */
 
-import { evaluatePosition } from '../engine/search';
+import { evaluatePosition, evaluatorForMode } from '../engine/search';
 import type { WorkerInbound, EvalResponse, EvalErrorResponse } from './protocol';
 
 self.onmessage = (e: MessageEvent<WorkerInbound>) => {
@@ -18,6 +18,9 @@ self.onmessage = (e: MessageEvent<WorkerInbound>) => {
     const result = evaluatePosition(board, msg.player, {
       timeLimitMs: msg.timeLimitMs,
       variant: msg.variant,
+      maxDepth: msg.maxDepth,
+      endgameEmpties: msg.endgameEmpties,
+      evaluator: evaluatorForMode(msg.evalMode ?? 'full'),
     });
 
     const response: EvalResponse = {

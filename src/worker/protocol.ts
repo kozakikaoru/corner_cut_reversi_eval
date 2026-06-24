@@ -3,7 +3,7 @@
  */
 
 import type { Player, VariantId } from '../engine/types';
-import type { MoveEval } from '../engine/search';
+import type { MoveEval, EvalMode } from '../engine/search';
 
 /** メイン → Worker: この局面を評価して。 */
 export interface EvalRequest {
@@ -18,6 +18,12 @@ export interface EvalRequest {
   variant: VariantId;
   /** 思考時間上限(ms)。未指定なら Worker 側で段階判定。 */
   timeLimitMs?: number;
+  /** 中盤の固定読み深さ(AI 弱レベルの強さ調整用)。未指定なら時間上限まで深くする。 */
+  maxDepth?: number;
+  /** 終盤完全読みに入る空きマスしきい値(弱レベルは小さくして完璧に読ませない)。 */
+  endgameEmpties?: number;
+  /** 評価モード(弱レベルは 'greedy' で枚数貪欲=弱く人間らしく)。未指定は 'full'。 */
+  evalMode?: EvalMode;
 }
 
 /** Worker → メイン: 評価結果。 */

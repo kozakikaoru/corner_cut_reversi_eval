@@ -16,7 +16,7 @@
  */
 
 import type { Board, Player, VariantId } from '../engine/types';
-import type { MoveEval } from '../engine/search';
+import type { MoveEval, EvalMode } from '../engine/search';
 import type { EvalRequest, WorkerOutbound } from './protocol';
 
 /** evaluate の結果(呼び出し側が必要とする最小限)。 */
@@ -54,13 +54,18 @@ export class EvalClient {
 
   /**
    * 局面を評価して結果を Promise で返す。
-   * timeLimitMs を渡すと思考時間上限を明示できる(AI 強さの調整に使う)。
+   * opts で思考時間上限・固定読み深さ・終盤完全読みしきい値を指定できる(AI 強さの調整に使う)。
    */
   evaluate(
     board: Board,
     player: Player,
     variant: VariantId,
-    timeLimitMs?: number,
+    opts: {
+      timeLimitMs?: number;
+      maxDepth?: number;
+      endgameEmpties?: number;
+      evalMode?: EvalMode;
+    } = {},
   ): Promise<EvalResult> {
     const reqId = ++this.reqId;
     const req: EvalRequest = {
@@ -69,7 +74,10 @@ export class EvalClient {
       board: Array.from(board),
       player,
       variant,
-      timeLimitMs,
+      timeLimitMs: opts.timeLimitMs,
+      maxDepth: opts.maxDepth,
+      endgameEmpties: opts.endgameEmpties,
+      evalMode: opts.evalMode,
     };
     return new Promise<EvalResult>((resolve, reject) => {
       this.pending.set(reqId, { resolve, reject });

@@ -33,7 +33,7 @@ import {
   countEmpties,
   raysFor,
 } from './board';
-import { evaluateForPlayer, positionWeightsFor } from './evaluate';
+import { evaluateForPlayer, greedyEvaluateForPlayer, positionWeightsFor } from './evaluate';
 import { hashKey } from './zobrist';
 
 // --- 調整用定数(ADR-002 / perf-estimate に基づく暫定値) --------------------
@@ -111,6 +111,15 @@ export interface Evaluator {
   score(board: Board, player: Player, rays: number[][][], weights: ReadonlyArray<number>): number;
 }
 const DEFAULT_EVALUATOR: Evaluator = { weights: positionWeightsFor, score: evaluateForPlayer };
+const GREEDY_EVALUATOR: Evaluator = { weights: positionWeightsFor, score: greedyEvaluateForPlayer };
+
+/** 評価モード。'full'=本番の精度評価 / 'greedy'=枚数貪欲(弱レベル AI 用)。 */
+export type EvalMode = 'full' | 'greedy';
+
+/** 評価モードから Evaluator を引く(Worker が AI レベルに応じて選ぶ)。 */
+export function evaluatorForMode(mode: EvalMode): Evaluator {
+  return mode === 'greedy' ? GREEDY_EVALUATOR : DEFAULT_EVALUATOR;
+}
 
 export interface EvalOptions {
   /** 思考時間上限(ms)。未指定なら段階に応じて自動。 */

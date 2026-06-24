@@ -438,7 +438,12 @@ export class VersusScreen {
 
     // 評価と「考えてる風の間」を並行で進め、両方そろってから着手する。
     const evalPromise = this.client
-      .evaluate(board, aiColor, this.config.variant, lv.timeLimitMs)
+      .evaluate(board, aiColor, this.config.variant, {
+        timeLimitMs: lv.timeLimitMs,
+        maxDepth: lv.maxDepth,
+        endgameEmpties: lv.endgameEmpties,
+        evalMode: lv.evalMode,
+      })
       .catch(() => null);
     const [lo, hi] = lv.thinkDelayMs;
     const delay = lo + Math.random() * (hi - lo);
@@ -538,7 +543,9 @@ export class VersusScreen {
     gen: number,
   ): Promise<void> {
     const result = await (prefetched ??
-      this.client.evaluate(preBoard, player, variant, JUDGE_TIME_LIMIT_MS).catch(() => null));
+      this.client
+        .evaluate(preBoard, player, variant, { timeLimitMs: JUDGE_TIME_LIMIT_MS })
+        .catch(() => null));
     if (gen !== this.generation || !this.game) return;
 
     if (result && result.moves.length > 0) {

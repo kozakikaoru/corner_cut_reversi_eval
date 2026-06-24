@@ -369,20 +369,29 @@ console.log('=== H. 対戦AI(6段階・着手選択) ===');
   check('AI: レベルは6段階', AI_LEVELS.length === 6);
   check('AI: バーサーカーが1つだけ special', AI_LEVELS.filter((l) => l.special).length === 1);
   const berserker = aiLevelById('berserker');
-  check('AI: バーサーカーは最善厳守(blunderRate=0)', berserker.blunderRate === 0);
-  check('AI: バーサーカーは topK=1', berserker.topK === 1);
+  check('AI: バーサーカーは最善厳守(mistakeRate=0)', berserker.mistakeRate === 0);
+  check('AI: バーサーカーは full 評価・終盤完全読みあり', berserker.evalMode === 'full' && berserker.endgameEmpties >= 16);
 
-  // H-2. 強さの単調性: 思考時間は Lv1<Lv2<…<バーサーカー、blunderRate は単調減少。
+  // H-2. 強さの単調性: ミス率は単調減少 / 終盤完全読みしきい値は単調非減少 / 弱レベルの読み深さは単調増加。
   {
-    let timeMonotonic = true;
-    let blunderMonotonic = true;
+    let mistakeMonotonic = true;
+    let endgameMonotonic = true;
     for (let i = 1; i < AI_LEVELS.length; i++) {
-      if (!(AI_LEVELS[i].timeLimitMs > AI_LEVELS[i - 1].timeLimitMs)) timeMonotonic = false;
-      if (!(AI_LEVELS[i].blunderRate <= AI_LEVELS[i - 1].blunderRate)) blunderMonotonic = false;
+      if (!(AI_LEVELS[i].mistakeRate <= AI_LEVELS[i - 1].mistakeRate)) mistakeMonotonic = false;
+      if (!(AI_LEVELS[i].endgameEmpties >= AI_LEVELS[i - 1].endgameEmpties)) endgameMonotonic = false;
     }
-    check('AI: 思考時間が単調増加(弱→強)', timeMonotonic);
-    check('AI: blunderRate が単調減少(弱→強)', blunderMonotonic);
-    check('AI: バーサーカーの思考時間が最長', berserker.timeLimitMs === Math.max(...AI_LEVELS.map((l) => l.timeLimitMs)));
+    check('AI: mistakeRate が単調減少(弱→強)', mistakeMonotonic);
+    check('AI: endgameEmpties が単調非減少(弱→強)', endgameMonotonic);
+    // Lv1〜5(非special)は固定読み深さ maxDepth が単調非減少(弱いほど浅い)。
+    // バーサーカーは時間制で深さ無制限。同じ深さでも評価モード(greedy→full)で強さ差をつける。
+    const nonSpecial = AI_LEVELS.filter((l) => !l.special);
+    let depthMonotonic = true;
+    for (let i = 1; i < nonSpecial.length; i++) {
+      if (!((nonSpecial[i].maxDepth ?? 0) >= (nonSpecial[i - 1].maxDepth ?? 0))) depthMonotonic = false;
+    }
+    check('AI: Lv1〜5 の読み深さが単調非減少', depthMonotonic);
+    check('AI: 弱レベル(Lv1〜3)は終盤完全読みOFF', aiLevelById(1).endgameEmpties === 0 && aiLevelById(2).endgameEmpties === 0 && aiLevelById(3).endgameEmpties === 0);
+    check('AI: 最弱(Lv1,2)は枚数貪欲評価', aiLevelById(1).evalMode === 'greedy' && aiLevelById(2).evalMode === 'greedy');
   }
 
   // H-3. 着手選択: テスト用の手集合(value 降順が明確)。
@@ -398,19 +407,25 @@ console.log('=== H. 対戦AI(6段階・着手選択) ===');
   check('AI: バーサーカーは常に最善を選ぶ', chooseAiMove(sample, berserker, () => 0.999) === 10);
   check('AI: バーサーカーは rng=0 でも最善', chooseAiMove(sample, berserker, () => 0) === 10);
 
-  // 弱レベル(Lv1): rng>=blunderRate なら最善、rng<blunderRate なら上位topKから。
+  // 弱レベル(Lv1): rng>=mistakeRate なら最善、rng<mistakeRate なら候補から。
   const lv1 = aiLevelById(1);
+  const lv3 = aiLevelById(3);
   check('AI: Lv1 も rng が大きければ最善', chooseAiMove(sample, lv1, () => 0.999) === 10);
-  // rng=0(blunder 発火 + 候補先頭) → 最善(候補は上位 topK の先頭=最善)。
-  check('AI: Lv1 blunder時も最悪手は選ばない(候補は上位手)', (() => {
-    // blunder 発火させ、候補内の最後を選ばせる rng シーケンスを模す。
-    // chooseAiMove は rng を2回使う: 1回目=blunder判定, 2回目=候補内 index。
+  // Lv1 は pickFrom='all' → ミス時は全合法手が対象(最悪手も出うる=初心者の暴発)。
+  // chooseAiMove は rng を2回使う: 1回目=ミス判定, 2回目=候補内 index。
+  check('AI: Lv1 はミス時に全手対象(最悪手も出うる)', (() => {
     let calls = 0;
-    const rng = () => (calls++ === 0 ? 0 : 0.999); // 1回目0(発火), 2回目ほぼ1(候補末尾)
-    const picked = chooseAiMove(sample, lv1, rng);
-    // Lv1 の topK=6 だが候補数は手数(5)に制限 → 末尾は cell=50。
-    // 「上位手から選ぶ」仕様の確認: 選ばれた手が sample 内に存在し、合法な cell であること。
-    return sample.some((m) => m.cell === picked);
+    const rng = () => (calls++ === 0 ? 0 : 0.999); // 1回目0(ミス発火), 2回目ほぼ1(候補末尾)
+    return chooseAiMove(sample, lv1, rng) === 50; // 全5手の末尾 = 最悪手 cell 50
+  })());
+  // Lv3 は pickFrom='topK' → ミス時も上位手のみ。最悪手(cell 50)は選ばない。
+  check('AI: Lv3 はミス時も上位手のみ(最悪手を選ばない)', (() => {
+    let calls = 0;
+    const rng = () => (calls++ === 0 ? 0 : 0.999); // ミス発火 + 候補末尾
+    const picked = chooseAiMove(sample, lv3, rng);
+    const topK = Math.max(2, Math.min(lv3.topK, sample.length));
+    const allowed = sample.slice().sort((a, b) => b.value - a.value).slice(0, topK).map((m) => m.cell);
+    return allowed.includes(picked) && picked !== 50;
   })());
 
   // 1手しかなければ必ずその手。
@@ -432,7 +447,7 @@ console.log('=== H. 対戦AI(6段階・着手選択) ===');
       if (chooseAiMove(sample, lv1, seeded) !== 10) lv1NonBest++;
       if (chooseAiMove(sample, berserker, seeded) !== 10) berserkerNonBest++;
     }
-    check('AI: Lv1 は高頻度で最善を外す(>30%)', lv1NonBest / N > 0.3);
+    check('AI: Lv1 は最善を外す頻度が高い(>20%)', lv1NonBest / N > 0.2);
     check('AI: バーサーカーは最善を外さない(0回)', berserkerNonBest === 0);
     console.log(`  [info] Lv1 非最善率=${Math.round((lv1NonBest / N) * 100)}% / バーサーカー非最善率=${Math.round((berserkerNonBest / N) * 100)}%`);
   }

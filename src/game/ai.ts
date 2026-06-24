@@ -1,26 +1,30 @@
 /**
  * 対戦 AI(6段階の強さ)。
  *
- * 設計(versus_mode.md):
- * - すべて既存の評価エンジン(EvalClient 経由の evaluatePosition)を流用する。
- *   AI の着手 = エンジンが返す各合法手の評価値を使って 1 手を選ぶこと。
- * - 強さは 3 つの軸で作る:
- *     (1) 思考時間上限(timeLimitMs)… 長いほど深く正確に読む。
- *     (2) 終盤完全読み(エンジンが空きマス数で自動判定。弱レベルは completeEndgame=false で
- *         完全読み相当の精度に頼らない=思考時間を短く絞ることで擬似的に弱くする)。
- *     (3) blunderRate / topK … 「わざと最善を外す確率」と「候補に含める上位手の数」。
- *         弱レベルほど高確率で次善以下を選び、初心者でも勝てるようにする。
+ * 設計方針(オセロAIの定石 + 実機調査に基づく / 2026-06-24 リバランス):
+ *   「ビギナーでも強すぎる」を解消するため、弱さを 1 つのレバーでなく複数の積で作る。
+ *   調査結果(notes 参照)の要点:
+ *     - 探索深さを削るだけでは弱く"見えて"妙に的確 → 人間は勝ちにくい。
+ *     - オセロでは「枚数貪欲(greedy)評価」が最弱クラス。かつ初心者の思考そのもので
+ *       人間らしい。弱レベルは evalMode='greedy' にするのが最も効く。
+ *     - 終盤完全読みは弱〜中レベルでは必ず OFF(endgameEmpties=0)。
+ *       これが入ると終盤だけ神になり、序盤リードした初心者が理不尽に逆転される。
+ *     - ミス時は「全合法手から一様」だと角自爆など理不尽な大悪手が出る。
+ *       Lv1 だけ 'all'(初心者の暴発再現)、Lv2 以上は上位手('topK')から選ぶ。
  *
- * バーサーカー(Lv6)は特別扱い:
- *   - 思考時間フル + 最善厳守(blunderRate=0)。
- *   - エンジンの終盤完全読みがそのまま効く(timeLimit を長く取る)。
- *   - 「基本勝てない最強」を体感させる。
+ *   強さ = 「読み深さ(maxDepth) × 評価の質(evalMode) × 終盤完全読み(endgameEmpties)
+ *           × ミス率(mistakeRate)/ミスの質(pickFrom)」の積。
+ *
+ * バーサーカー(Lv6)は特別: 時間いっぱい深く読み、最善厳守、終盤完全読みも全開。
  */
 
-import type { MoveEval } from '../engine/search';
+import type { MoveEval, EvalMode } from '../engine/search';
 
 /** AI 強さレベル ID。1..5 + 'berserker'。 */
 export type AiLevelId = 1 | 2 | 3 | 4 | 5 | 'berserker';
+
+/** ミス時の候補の選び方。'all'=全合法手から / 'topK'=評価上位 K 手から。 */
+export type AiPickFrom = 'all' | 'topK';
 
 /** UI 表示・選択に使う AI レベル定義。 */
 export interface AiLevel {
@@ -31,70 +35,91 @@ export interface AiLevel {
   desc: string;
   /** バーサーカー(特別演出)か。 */
   special: boolean;
-  // --- 強さパラメータ ---
-  /** エンジンへ渡す思考時間上限(ms)。長いほど深く読む。 */
-  timeLimitMs: number;
+
+  // --- エンジンの強さ(探索の効かせ方) ---
   /**
-   * 「最善を外す」確率(0..1)。
-   * この確率で、最善ではなく候補(topK 内)からゆるく選ぶ。
+   * 中盤の固定読み深さ。小さいほど浅く弱い。
+   * 未指定なら timeLimitMs まで反復深化(=深く読む。バーサーカー用)。
    */
-  blunderRate: number;
+  maxDepth?: number;
+  /** 思考時間上限(ms)。maxDepth 未指定のレベル(バーサーカー)で深さを時間で決める。 */
+  timeLimitMs?: number;
   /**
-   * blunder 時に候補とする「上位 K 手」。
-   * 小さいほど致命的なミスはしにくい。Lv1 は大きめにして派手に外す。
+   * 終盤完全読みに入る空きマスしきい値。0 にすると完全読みを使わない(=終盤も弱いまま)。
+   * 弱〜中レベルは 0、強レベルだけ大きくして終盤を正確に詰める。
    */
+  endgameEmpties: number;
+  /** 評価モード。'greedy'=枚数貪欲(弱・人間らしい)/ 'full'=本番の精度評価。 */
+  evalMode: EvalMode;
+
+  // --- 着手選択(人間らしいミス) ---
+  /** 最善ではなく候補から選ぶ確率(0..1)。高いほどよくミスする。 */
+  mistakeRate: number;
+  /** ミス時に候補とする手の範囲。 */
+  pickFrom: AiPickFrom;
+  /** pickFrom='topK' のときの上位手数。 */
   topK: number;
-  /**
-   * 思考演出の「間」の目安レンジ(ms)。実際はこの範囲でランダム。
-   * 弱いほど短め(サクサク)、強いほど長め(熟考感)。
-   */
+
+  /** 思考演出の「間」の目安レンジ(ms)。実際はこの範囲でランダム。 */
   thinkDelayMs: readonly [number, number];
 }
 
 /**
- * 6 段階の定義。
- * timeLimitMs は「弱=短い→強=長い」で段階差をつけ、blunderRate / topK で
- * 弱レベルの "わざと外す" 度合いを調整する。具体値は体感差が出るよう設定(後で微調整可)。
+ * 6 段階の定義(2026-06-24 リバランス)。
+ * 弱: greedy 評価 + 浅い読み + 完全読みなし + 高ミス率 → 初心者が気持ちよく勝てる。
+ * 強: full 評価 + 深い読み + 完全読み + 低ミス率 → 上達しないと勝てない。
  */
 export const AI_LEVELS: readonly AiLevel[] = [
   {
     id: 1,
     label: 'Lv.1 ビギナー',
-    desc: 'ごく浅い読み・かなりミスする。初心者向け',
+    desc: '枚数を取るだけ・浅い読み。初心者でも勝てる',
     special: false,
-    timeLimitMs: 80,
-    blunderRate: 0.75, // 高確率で次善以下
+    maxDepth: 1,
+    endgameEmpties: 0,
+    evalMode: 'greedy',
+    mistakeRate: 0.35,
+    pickFrom: 'all',
     topK: 6,
     thinkDelayMs: [350, 650],
   },
   {
     id: 2,
     label: 'Lv.2 かけだし',
-    desc: '浅い読み・たまにミスする',
+    desc: '少し読むが大局観なし・よくミスする',
     special: false,
-    timeLimitMs: 200,
-    blunderRate: 0.5,
+    maxDepth: 2,
+    endgameEmpties: 0,
+    evalMode: 'greedy',
+    mistakeRate: 0.30,
+    pickFrom: 'topK',
     topK: 4,
     thinkDelayMs: [450, 800],
   },
   {
     id: 3,
     label: 'Lv.3 中級',
-    desc: 'そこそこ読む・ミスは控えめ',
+    desc: '角や辺を意識する・たまにミスする',
     special: false,
-    timeLimitMs: 500,
-    blunderRate: 0.28,
-    topK: 3,
+    maxDepth: 2,
+    endgameEmpties: 0,
+    evalMode: 'full',
+    mistakeRate: 0.26,
+    pickFrom: 'topK',
+    topK: 4,
     thinkDelayMs: [600, 1000],
   },
   {
     id: 4,
     label: 'Lv.4 上級',
-    desc: 'よく読む・ほぼ最善に近い',
+    desc: 'しっかり読む・好手で対抗しないと勝てない',
     special: false,
-    timeLimitMs: 1000,
-    blunderRate: 0.12,
-    topK: 2,
+    maxDepth: 4,
+    endgameEmpties: 6,
+    evalMode: 'full',
+    mistakeRate: 0.16,
+    pickFrom: 'topK',
+    topK: 3,
     thinkDelayMs: [700, 1200],
   },
   {
@@ -102,8 +127,11 @@ export const AI_LEVELS: readonly AiLevel[] = [
     label: 'Lv.5 エキスパート',
     desc: '深く読む・滅多にミスしない',
     special: false,
-    timeLimitMs: 1800,
-    blunderRate: 0.04,
+    maxDepth: 8,
+    endgameEmpties: 14,
+    evalMode: 'full',
+    mistakeRate: 0.03,
+    pickFrom: 'topK',
     topK: 2,
     thinkDelayMs: [800, 1400],
   },
@@ -112,8 +140,11 @@ export const AI_LEVELS: readonly AiLevel[] = [
     label: 'バーサーカー',
     desc: '全力・最善厳守・終盤完全読み。基本勝てない最強',
     special: true,
-    timeLimitMs: 3000, // フル(終盤は完全読みが効く)
-    blunderRate: 0, // 最善厳守
+    timeLimitMs: 3000, // 時間いっぱい深く読む(maxDepth 指定なし)。
+    endgameEmpties: 18,
+    evalMode: 'full',
+    mistakeRate: 0, // 最善厳守。
+    pickFrom: 'topK',
     topK: 1,
     thinkDelayMs: [900, 1500],
   },
@@ -128,9 +159,14 @@ export function aiLevelById(id: AiLevelId): AiLevel {
 
 /**
  * エンジンの評価結果(各合法手の value)から AI が指す 1 手を選ぶ。
- * - 通常は最善手。
- * - blunderRate の確率で、最善との差が小さい「上位 topK 手」からゆるく選ぶ
- *   (完全なランダムにすると弱くなりすぎる・不自然になるため、上位手に限定)。
+ *
+ * モデル(2 段構え):
+ *   - 確率 (1 - mistakeRate) で最善手。
+ *   - 確率 mistakeRate で「候補」から 1 つ抽選(=人間らしいブレ)。候補は:
+ *       pickFrom='all'  → 全合法手から一様(Lv1 のみ。初心者の暴発を再現)。
+ *       pickFrom='topK' → 評価上位 K 手から一様(「正しい方向だが最善でない」ミス)。
+ *   ※ 評価の弱さ(evalMode='greedy' 等)・読みの浅さは別途エンジン側で効かせる。
+ *     ここはあくまで「与えられた評価の中でどうブレるか」を担う。
  *
  * @param moves エンジンが返した各手の評価(順不同でもよい。内部で降順化する)。
  * @param level AI 強さ。
@@ -149,17 +185,16 @@ export function chooseAiMove(
   const bestCell = sorted[0].cell;
 
   // 最善厳守 or 1 手しかない → 最善。
-  if (level.blunderRate <= 0 || sorted.length === 1) return bestCell;
+  if (level.mistakeRate <= 0 || sorted.length === 1) return bestCell;
 
-  // blunder 判定。最善を指すならそのまま。
-  if (rng() >= level.blunderRate) return bestCell;
+  // ミス判定。発火しなければ最善。
+  if (rng() >= level.mistakeRate) return bestCell;
 
-  // blunder: 上位 topK(最低でも 2 手)から選ぶ。
-  // 候補が 1 手しかなければ最善になる。
-  const k = Math.max(2, Math.min(level.topK, sorted.length));
-  const candidates = sorted.slice(0, k);
-  // 候補内でも完全一様にせず、弱レベルでも「最悪手ばかり」を選ばないよう
-  // 候補からランダムに 1 つ(=次善以下を含む上位手のどれか)。
-  const pick = Math.floor(rng() * candidates.length);
-  return candidates[Math.min(pick, candidates.length - 1)].cell;
+  // ミス: 候補から 1 つ抽選。
+  const pool =
+    level.pickFrom === 'all'
+      ? sorted
+      : sorted.slice(0, Math.max(2, Math.min(level.topK, sorted.length)));
+  const pick = Math.floor(rng() * pool.length);
+  return pool[Math.min(pick, pool.length - 1)].cell;
 }
