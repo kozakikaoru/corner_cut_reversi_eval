@@ -9,7 +9,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "check:engine": "esbuild scripts/engine-check.ts --bundle --platform=node --format=esm --outfile=scripts/.engine-check.mjs && node scripts/.engine-check.mjs"
+    "check:engine": "esbuild scripts/engine-check.ts --bundle --platform=node --format=esm --outfile=scripts/.engine-check.mjs && node scripts/.engine-check.mjs",
+    "bench:eval": "esbuild scripts/eval-bench.ts --bundle --platform=node --format=esm --outfile=scripts/.eval-bench.mjs && node scripts/.eval-bench.mjs",
+    "bench:ab": "esbuild scripts/selfplay-ab.ts --bundle --platform=node --format=esm --outfile=scripts/.selfplay-ab.mjs && node scripts/.selfplay-ab.mjs"
   },
   "devDependencies": {
     "typescript": "^5.4.5",

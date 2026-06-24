@@ -50,9 +50,11 @@ const MAX_MIDGAME_DEPTH = 12;
 /**
  * 中盤評価(無次元スコア)→ 表示用「石差スケール」への変換係数。
  * 評価関数の W_* 係数に対するおおまかな正規化。
- * ⚠️ 後で精度調整する箇所(実測してスケールを合わせる)。
+ * 精度改善版の評価関数(マス重み強化+フロンティア項)で手の評価値の広がりが約1.46倍に
+ * なったため、表示値の広がりと GOOD_THRESHOLD の感覚を従来どおりに保つよう 1/9 へ較正
+ * (scripts/eval-scale.ts の実測に基づく)。
  */
-const DISC_SCALE = 1 / 6;
+const DISC_SCALE = 1 / 9;
 
 /** 置換表エントリの種別。 */
 const enum Flag {
@@ -100,6 +102,16 @@ export interface PositionEval {
   timedOut: boolean;
 }
 
+/**
+ * 葉評価器(中盤の評価関数 + そのマス重み)。
+ * 既定は本番の評価関数。ベンチ/テストで旧版などと差し替え、強さを A/B 比較するために注入可能にする。
+ */
+export interface Evaluator {
+  weights(variant: VariantId): ReadonlyArray<number>;
+  score(board: Board, player: Player, rays: number[][][], weights: ReadonlyArray<number>): number;
+}
+const DEFAULT_EVALUATOR: Evaluator = { weights: positionWeightsFor, score: evaluateForPlayer };
+
 export interface EvalOptions {
   /** 思考時間上限(ms)。未指定なら段階に応じて自動。 */
   timeLimitMs?: number;
@@ -107,6 +119,13 @@ export interface EvalOptions {
   endgameEmpties?: number;
   /** 盤面の種類。盤面ごとのレイ/マス重みを選ぶ。未指定はクロス盤(従来互換)。 */
   variant?: VariantId;
+  /**
+   * 中盤反復深化の最大深さ(未指定なら時間上限まで深くする)。
+   * 固定深さの再現可能な探索が欲しいベンチ/テスト用。評価値の意味は変えない。
+   */
+  maxDepth?: number;
+  /** 葉評価器の差し替え(既定=本番評価)。強さ A/B 比較用。 */
+  evaluator?: Evaluator;
 }
 
 /** 時間切れを伝える例外(反復深化の途中打ち切り用)。 */
@@ -125,7 +144,8 @@ export function evaluatePosition(
   const board = rootBoard.slice(); // 破壊しないようコピーして使う
   const variant: VariantId = options.variant ?? 'cross';
   const rays = raysFor(variant);
-  const weights = positionWeightsFor(variant);
+  const evaluator = options.evaluator ?? DEFAULT_EVALUATOR;
+  const weights = evaluator.weights(variant);
   const empties = countEmpties(board);
   const endgameThreshold = options.endgameEmpties ?? ENDGAME_EMPTIES;
   const isEndgame = empties <= endgameThreshold;
@@ -134,6 +154,7 @@ export function evaluatePosition(
     options.timeLimitMs ??
     (isEndgame ? ENDGAME_TIME_MS : MIDGAME_TIME_MS);
   const deadline = start + timeLimit;
+  const maxDepth = Math.min(MAX_MIDGAME_DEPTH, options.maxDepth ?? MAX_MIDGAME_DEPTH);
 
   const moves = legalMoves(board, player, rays);
   const ctx: SearchCtx = {
@@ -143,6 +164,7 @@ export function evaluatePosition(
     deadline,
     rays,
     weights,
+    score: evaluator.score,
   };
 
   // 合法手なし(パス局面)。呼び出し側で扱うが、念のため空で返す。
@@ -182,13 +204,13 @@ export function evaluatePosition(
       ctx.tt.clear();
       endgameCompleted = false;
       timedOut = true;
-      const id = iterativeDeepening(ctx, player, moves);
+      const id = iterativeDeepening(ctx, player, moves, maxDepth);
       result = id.moves;
       reachedDepth = id.depth;
     }
   } else {
     // --- 中盤: 反復深化。時間内に到達できた最深の結果を採用 ---
-    const id = iterativeDeepening(ctx, player, moves);
+    const id = iterativeDeepening(ctx, player, moves, maxDepth);
     result = id.moves;
     reachedDepth = id.depth;
     // 反復深化が深さ1すら完了できないほど時間が厳しかった場合も時間切れ扱い。
@@ -219,6 +241,8 @@ interface SearchCtx {
   rays: number[][][];
   /** この盤面のマス重み(評価・move ordering 用)。 */
   weights: ReadonlyArray<number>;
+  /** 葉評価関数(差し替え可能)。 */
+  score: Evaluator['score'];
 }
 
 /**
@@ -229,11 +253,12 @@ function iterativeDeepening(
   ctx: SearchCtx,
   player: Player,
   moves: number[],
+  maxDepth: number,
 ): { moves: MoveEval[]; depth: number } {
   let lastCompleted: MoveEval[] = moves.map((cell) => ({ cell, value: 0, exact: false }));
   let completedDepth = 0;
 
-  for (let depth = 1; depth <= MAX_MIDGAME_DEPTH; depth++) {
+  for (let depth = 1; depth <= maxDepth; depth++) {
     try {
       const evals = rootSearchAllMoves(ctx, player, moves, depth, false);
       // 完了 → 採用。次深さの ordering のため value 降順に。
@@ -319,7 +344,7 @@ function negamax(
 
   // 葉条件: 中盤は深さ0、終盤は空きが尽きる(=どちらも打てない)まで。
   if (!endgame && depth <= 0) {
-    return evaluateForPlayer(ctx.board, player, ctx.rays, ctx.weights);
+    return ctx.score(ctx.board, player, ctx.rays, ctx.weights);
   }
 
   // 置換表参照。

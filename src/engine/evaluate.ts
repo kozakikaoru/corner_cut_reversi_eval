@@ -4,35 +4,29 @@
  * 探索内では常に「手番側から見た値」を使う(negamax)。本関数は
  * evaluateForPlayer(board, player, rays, weights) で「player から見た評価値」を返す。
  *
- * 構成(feasibility_design §2(b) に沿う):
- *   1. マス重みテーブル(盤面ごとに手続き的に生成。下記 positionWeightsFor)
+ * 構成(オセロの定石的な評価項を、異形盤でも破綻しないよう一般化):
+ *   1. マス重みテーブル(盤面ごとに手続き生成。角>辺>内部、X/C マスは負)
  *   2. 着手可能数(mobility)
- *   3. 石数(disc count) ※終盤に向けて比重を上げたいが MVP では軽め
+ *   3. 開放度(フロンティア石 = 空きに接する石。少ないほど安定で良い)
+ *   4. 石数(disc count) ※中盤は軽め(終盤完全読みでは本関数は使わない)
  *
- * フェーズ2の方針 — マス重みを盤面ごとに自動生成する:
- *   従来は 8×8(四隅2×2欠け)前提の固定テーブルをハードコードしていた。盤面が4種に
- *   増えたため、欠けマス集合から「角・辺・危険マス」を判定して重みを手続き的に作る。
- *   各盤面で破綻しない汎用ロジックを最優先(精度チューニングは後追い)。
+ * マス重みの考え方(異形盤の一般化):
+ *   「打てるマスのうち、8 近傍に占める “盤上(欠けでも盤外でもない)” の数が少ない=
+ *    取られにくい安定マス」を角的とみなし高い重みを与える。通常盤の四隅・クロス盤の肩
+ *    などが自然に高評価になる。角に隣接するマスは相手へ角を渡しうる危険マスとして負に:
+ *     - 対角隣接(X マス)= 最も危険 → 強い負。
+ *     - 直交隣接(C マス)= やや危険   → 軽い負。
  *
- *   角(コーナー)の定義(異形盤の一般化):
- *     「打てるマスのうち、8近傍に占める “盤上(欠けでも盤外でもない)” の数が少ない=
- *      取られにくい安定マス」を角的とみなし高い重みを与える。
- *     通常盤の四隅(近傍3)・クロス盤の肩(近傍が壁で削られる)などが自然に高評価になる。
- *     角に隣接する空き(=相手に角を渡しうる危険マス)は負の重みにする。
- *
- *   ⚠️ 後で精度調整する箇所:
- *     - 重み生成のヒューリスティック(NEIGHBOR ベース)は MVP の手置き。盤面ごとの
- *       本格チューニングは自己対戦で行う(各盤面の定数を別途持てる設計余地は残す)。
- *     - 各項の係数(W_POSITION / W_MOBILITY / W_DISC)も暫定値。
- *     - 確定石・開放度・パリティ等の項は未実装(v2 で追加予定)。
+ * 係数はベンチ(scripts/eval-bench.ts:完全読みを正解とした着手 regret)で較正する。
+ * 未実装(将来):確定石(stable discs)・パリティ。
  */
 
 import {
   type Board,
   type Player,
   type VariantId,
-  BLACK,
   EMPTY,
+  BLOCKED,
   CELLS,
   SIZE,
   idx,
@@ -41,28 +35,38 @@ import {
 } from './types';
 import { legalMoves } from './board';
 
-// --- 各項の重み係数(暫定値 / 後で精度調整する箇所) -------------------------
+// --- マス重み生成のヒューリスティック定数(ベンチで較正) --------------------
+/** 角(取られにくい安定マス)の重み。 */
+const WEIGHT_CORNER = 36;
+/** 辺・準安定マスの重み。 */
+const WEIGHT_EDGE = 8;
+/** 中央寄りの内部マスの基準重み。 */
+const WEIGHT_INNER = 2;
+/** X マス(角に対角隣接=最も危険)の重み(負)。 */
+const WEIGHT_X = -28;
+/** C マス(角に直交隣接=やや危険)の重み(負)。 */
+const WEIGHT_C = -8;
+
+// --- 評価項の重み係数(ベンチで較正) ----------------------------------------
 /** マス重みの寄与。 */
 const W_POSITION = 1.0;
-/** 着手可能数(mobility)の差 1 手あたりのスコア。 */
+/** フロンティア石(空きに接する石)差の重み。少ない方が良いので符号は「相手-自分」。 */
+const W_FRONTIER = 2.5;
+/** mobility(着手可能数の差)1 手あたりの重み。 */
 const W_MOBILITY = 4.0;
-/** 石数差 1 個あたりのスコア(中盤は小さめ。終盤完全読みでは本関数は使わない)。 */
+/** disc 差 1 個あたりの重み(中盤は軽め)。 */
 const W_DISC = 1.0;
-
-// --- マス重み生成のヒューリスティック定数(後で精度調整する箇所) ------------
-/** 角(取られにくい安定マス)の重み。 */
-const WEIGHT_CORNER = 30;
-/** 辺・準安定マスの重み。 */
-const WEIGHT_EDGE = 6;
-/** 角に隣接する危険マス(相手に角を渡しうる)の重み(負)。 */
-const WEIGHT_X_DANGER = -12;
-/** 中央寄りの内部マスの基準重み。 */
-const WEIGHT_INNER = 1;
 
 const DIRS8: ReadonlyArray<readonly [number, number]> = [
   [-1, -1], [-1, 0], [-1, 1],
   [0, -1],           [0, 1],
   [1, -1],  [1, 0],  [1, 1],
+];
+const DIRS_DIAG: ReadonlyArray<readonly [number, number]> = [
+  [-1, -1], [-1, 1], [1, -1], [1, 1],
+];
+const DIRS_ORTHO: ReadonlyArray<readonly [number, number]> = [
+  [-1, 0], [1, 0], [0, -1], [0, 1],
 ];
 
 /**
@@ -70,12 +74,9 @@ const DIRS8: ReadonlyArray<readonly [number, number]> = [
  * 欠けマスは 0。VariantId でキャッシュする。
  *
  * 手順:
- *   1. 各プレイ可能マスの「盤上(=非壁)8近傍数」を数える。少ないほど安定(角的)。
- *      - 近傍数 <= 3 → 角(WEIGHT_CORNER)
- *      - 近傍数 4..5 → 辺(WEIGHT_EDGE)
- *      - それ以外    → 内部(WEIGHT_INNER)
- *   2. 角マスに隣接するプレイ可能マスは危険マス(WEIGHT_X_DANGER)で上書き。
- *      ただしそれ自身が角なら角のまま(角>危険)。
+ *   1. 各プレイ可能マスの「盤上(=非壁)8 近傍数」で 角/辺/内部 を分類。
+ *      近傍 <=3 → 角(WEIGHT_CORNER) / 4..5 → 辺(WEIGHT_EDGE) / それ以外 → 内部(WEIGHT_INNER)。
+ *   2. 角でないマスのうち、角に対角隣接=X マス(WEIGHT_X)、直交隣接=C マス(WEIGHT_C)を上書き。
  */
 const WEIGHTS_CACHE = new Map<VariantId, ReadonlyArray<number>>();
 
@@ -108,21 +109,22 @@ export function positionWeightsFor(variant: VariantId): ReadonlyArray<number> {
     }
   }
 
-  // 2. 角に隣接するマスを危険マスに(角自身は維持)。
+  // 2. 角に隣接するマスを危険マスに(角自身は維持)。対角=X(強い負)/ 直交=C(軽い負)。
   for (let cell = 0; cell < CELLS; cell++) {
     if (blocked[cell] || isCorner[cell]) continue;
     const r = Math.floor(cell / SIZE);
     const c = cell % SIZE;
-    let adjacentToCorner = false;
-    for (const [dr, dc] of DIRS8) {
-      const nr = r + dr;
-      const nc = c + dc;
-      if (onBoard(nr, nc) && isCorner[idx(nr, nc)]) {
-        adjacentToCorner = true;
-        break;
-      }
+    let diagCorner = false;
+    let orthoCorner = false;
+    for (const [dr, dc] of DIRS_DIAG) {
+      if (onBoard(r + dr, c + dc) && isCorner[idx(r + dr, c + dc)]) diagCorner = true;
     }
-    if (adjacentToCorner) weights[cell] = WEIGHT_X_DANGER;
+    for (const [dr, dc] of DIRS_ORTHO) {
+      if (onBoard(r + dr, c + dc) && isCorner[idx(r + dr, c + dc)]) orthoCorner = true;
+    }
+    // X マス(対角隣接)を優先(より危険)。
+    if (diagCorner) weights[cell] = WEIGHT_X;
+    else if (orthoCorner) weights[cell] = WEIGHT_C;
   }
 
   WEIGHTS_CACHE.set(variant, weights);
@@ -144,35 +146,57 @@ export function evaluateForPlayer(
 ): number {
   const opp = opponent(player);
 
-  // 1. マス重み + 石数
+  // 1 パスで「マス重み・石数・フロンティア石」をまとめて集計。
   let positionScore = 0;
   let myDiscs = 0;
   let oppDiscs = 0;
+  let myFrontier = 0;
+  let oppFrontier = 0;
+
   for (let cell = 0; cell < CELLS; cell++) {
     const v = board[cell];
-    if (v === EMPTY || v === 3 /* BLOCKED */) continue;
-    if (v === player) {
+    if (v === EMPTY || v === BLOCKED) continue;
+
+    const mine = v === player;
+    if (mine) {
       positionScore += weights[cell];
       myDiscs++;
     } else {
       positionScore -= weights[cell];
       oppDiscs++;
     }
+
+    // フロンティア石: 8 近傍に空きマスがある石。少ないほど安定。
+    const r = Math.floor(cell / SIZE);
+    const c = cell % SIZE;
+    let frontier = false;
+    for (const [dr, dc] of DIRS8) {
+      const nr = r + dr;
+      const nc = c + dc;
+      if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && board[idx(nr, nc)] === EMPTY) {
+        frontier = true;
+        break;
+      }
+    }
+    if (frontier) {
+      if (mine) myFrontier++;
+      else oppFrontier++;
+    }
   }
 
   // 2. mobility(着手可能数の差)
-  const myMob = legalMoves(board, player, rays).length;
-  const oppMob = legalMoves(board, opp, rays).length;
-  const mobilityScore = myMob - oppMob;
+  const mobilityScore = legalMoves(board, player, rays).length - legalMoves(board, opp, rays).length;
 
-  // 3. 石数差(MVP では軽め)
+  // 3. フロンティア差(自分が少ない=有利なので「相手 - 自分」)
+  const frontierScore = oppFrontier - myFrontier;
+
+  // 4. 石数差
   const discScore = myDiscs - oppDiscs;
 
   return (
     W_POSITION * positionScore +
     W_MOBILITY * mobilityScore +
+    W_FRONTIER * frontierScore +
     W_DISC * discScore
   );
 }
-
-export { W_POSITION, W_MOBILITY, W_DISC, BLACK };

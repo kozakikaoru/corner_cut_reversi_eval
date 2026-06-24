@@ -4,7 +4,8 @@ dist-ssr
 *.local
 .DS_Store
 .vite
-scripts/.engine-check.mjs
+# ベンチ/検証スクリプトのビルド成果物(esbuild バンドル)
+scripts/.*.mjs
 
 # 端末固有のプレビュー起動設定(Nodeの絶対パスを含む)
 .claude/
