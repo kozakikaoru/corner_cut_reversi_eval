@@ -47,7 +47,7 @@ export class MenuScreen {
         'menu-card-versus',
         ICON_SWORDS,
         '対戦モード',
-        'AIと対局。6段階の強さ + あなたのプレイを採点',
+        'AIと対局。5段階の強さ + あなたのプレイを採点',
         onVersus,
       ),
     );
