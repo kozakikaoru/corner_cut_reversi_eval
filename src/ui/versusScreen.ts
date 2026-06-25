@@ -42,7 +42,7 @@ import {
 } from '../game/scoring';
 import type { VersusConfig, VersusVariantChoice } from '../game/versusConfig';
 import { BoardView } from './boardView';
-import { ICON_BACK, ICON_EVAL, ICON_RESET, ICON_SWORDS } from './icons';
+import { ICON_BACK, ICON_CHECK, ICON_EVAL, ICON_RESET, ICON_SWORDS } from './icons';
 import type { MoveEval } from '../engine/search';
 
 /**
@@ -98,6 +98,10 @@ export class VersusScreen {
   private pendingScore: Promise<void> | null = null;
   /** 評価値表示トグルの状態。 */
   private showEvals = false;
+  /** 答え合わせトグルの状態(自分の着手後に最善手のマスを薄く示す)。 */
+  private showAnswer = false;
+  /** 答え合わせで薄く示す最善手のマス(無ければ null)。次の自分の手番で消す。 */
+  private answerCell: number | null = null;
   /** トグル ON 時に保持する現手番の評価結果。 */
   private currentEvals: MoveEval[] | null = null;
   /** UI ロック(AI 思考中・評価待ちはプレイヤー着手を受けない)。 */
@@ -114,10 +118,13 @@ export class VersusScreen {
 
   // ---- 対局画面の DOM 参照 ----
   private boardEl: HTMLElement | null = null;
+  /** 盤面を包む相対配置のラッパ(パス通知・火花エフェクトの重ね先)。 */
+  private boardWrapEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
   private turnBannerEl: HTMLElement | null = null;
   private judgeEl: HTMLElement | null = null;
   private evalToggleBtn: HTMLButtonElement | null = null;
+  private answerToggleBtn: HTMLButtonElement | null = null;
   /** パス通知を盤面中央に重ねて出すオーバーレイ。 */
   private passOverlayEl: HTMLElement | null = null;
   private judgeTimer: number | null = null;
@@ -275,6 +282,8 @@ export class VersusScreen {
     this.plyCount = 0;
     this.pendingScore = null;
     this.showEvals = false;
+    this.showAnswer = false;
+    this.answerCell = null;
     this.currentEvals = null;
     this.prefetchEvals = null;
     this.prefetchKey = null;
@@ -332,9 +341,10 @@ export class VersusScreen {
     this.statusEl = document.createElement('div');
     this.statusEl.className = 'status';
 
-    // 盤面(+ パス通知オーバーレイ)。盤の中央に重ねるため相対配置のラッパで包む。
+    // 盤面(+ パス通知オーバーレイ・火花エフェクト)。盤に重ねるため相対配置のラッパで包む。
     const boardWrap = document.createElement('div');
     boardWrap.className = 'board-wrap';
+    this.boardWrapEl = boardWrap;
     this.boardEl = document.createElement('div');
     this.passOverlayEl = document.createElement('div');
     this.passOverlayEl.className = 'pass-overlay';
@@ -354,6 +364,14 @@ export class VersusScreen {
     this.evalToggleBtn.addEventListener('click', () => this.toggleEvals());
     this.syncEvalToggleLabel();
     controls.appendChild(this.evalToggleBtn);
+
+    // 答え合わせトグル(自分の着手後に最善手だったマスを薄く示す)。
+    this.answerToggleBtn = document.createElement('button');
+    this.answerToggleBtn.className = 'ctrl-btn btn-answer-toggle';
+    this.answerToggleBtn.type = 'button';
+    this.answerToggleBtn.addEventListener('click', () => this.toggleAnswer());
+    this.syncAnswerToggleLabel();
+    controls.appendChild(this.answerToggleBtn);
 
     // 初めからやり直す(同じ設定=盤面・手番の色のまま盤面をリセット)。
     const restartBtn = document.createElement('button');
@@ -417,6 +435,9 @@ export class VersusScreen {
     if (turn === this.config.playerColor) {
       // プレイヤー手番。
       this.busy = false;
+      // 答え合わせ表示は「次に自分が打つまで」残す(AIが速い初級でも見られるように)。
+      // 消すのは handlePlayerClick(次の着手時)。空マスにしか出ないので、相手がそこに
+      // 打った場合は描画側で自然に消える。
       this.setBanner('あなたの番です', 'you');
       // 改善1: トグルの ON/OFF に関わらず、この手番の評価を裏で先読み(プリフェッチ)。
       // ON で即表示でき、採点にも流用する。
@@ -502,6 +523,9 @@ export class VersusScreen {
     const legalBefore = this.game.getLegalMoves();
     if (!legalBefore.includes(cell)) return;
 
+    // 新しい一手を打つので、前手の答え合わせ表示は消す。
+    this.answerCell = null;
+
     const gen = this.generation;
     const board = this.game.getBoard();
     const player = this.config.playerColor;
@@ -561,11 +585,37 @@ export class VersusScreen {
     if (result && result.moves.length > 0) {
       const score = judgeMove(result.moves, cell);
       this.moveScores.push(score);
-      // 判定バーは「選択の余地あり(合法手2個以上)」かつ「1手目でない」ときだけ表示。
+      // 判定バー・エフェクト・答え合わせは「選択の余地あり(合法手2個以上)」かつ
+      // 「1手目でない」ときだけ(強制手・初手は実力ではないため出さない)。
       if (legalCount >= 2 && plyIndex >= 1) {
         this.showJudge(score.kind);
+        if (score.kind === 'perfect') {
+          // 最善手: クリティカル風の火花エフェクトを着手マスに出す。
+          this.showCritSpark(cell);
+        } else if (this.showAnswer) {
+          // 答え合わせ ON で最善を外したとき: 最善手だったマスを薄く示す。
+          // (次に自分が打つまで残す。世代ズレは関数冒頭の gen チェックで弾く)
+          const best = this.bestMoveCell(result.moves);
+          if (best >= 0) {
+            this.answerCell = best;
+            this.draw();
+          }
+        }
       }
     }
+  }
+
+  /** 評価結果の中で最大評価値の手(=最善手)のマスを返す。無ければ -1。 */
+  private bestMoveCell(moves: MoveEval[]): number {
+    let bestCell = -1;
+    let bestVal = -Infinity;
+    for (const m of moves) {
+      if (m.value > bestVal) {
+        bestVal = m.value;
+        bestCell = m.cell;
+      }
+    }
+    return bestCell;
   }
 
   // =========================================================================
@@ -575,6 +625,12 @@ export class VersusScreen {
   private toggleEvals(): void {
     this.showEvals = !this.showEvals;
     this.syncEvalToggleLabel();
+    if (this.showEvals) {
+      // 評価値表示と答え合わせは併用しない(評価値表示は最善も含め全手を見せるため)。
+      this.showAnswer = false;
+      this.answerCell = null;
+      this.syncAnswerToggleLabel();
+    }
     if (!this.game || !this.config) return;
     // プレイヤー手番のときだけ表示(AI 手番はバナー優先・盤は触れない)。
     if (!this.showEvals) {
@@ -699,6 +755,32 @@ export class VersusScreen {
     this.evalToggleBtn.classList.toggle('active', on);
     this.evalToggleBtn.setAttribute('aria-pressed', String(on));
     this.evalToggleBtn.innerHTML = `${ICON_EVAL}<span>評価値表示: ${on ? 'ON' : 'OFF'}</span>`;
+  }
+
+  /**
+   * 答え合わせトグルの ON/OFF。ON のあいだは、自分の着手後に最善手だったマスを薄く示す。
+   * 評価値表示とは併用しない(どちらかを ON にすると他方は OFF になる)。
+   */
+  private toggleAnswer(): void {
+    this.showAnswer = !this.showAnswer;
+    this.syncAnswerToggleLabel();
+    if (this.showAnswer && this.showEvals) {
+      // 相互排他: 評価値表示が ON なら OFF にする。
+      this.showEvals = false;
+      this.syncEvalToggleLabel();
+      this.currentEvals = null;
+      this.setEvalPending(false);
+    }
+    if (!this.showAnswer) this.answerCell = null; // OFF で今の表示を消す。
+    this.draw();
+  }
+
+  private syncAnswerToggleLabel(): void {
+    if (!this.answerToggleBtn) return;
+    const on = this.showAnswer;
+    this.answerToggleBtn.classList.toggle('active', on);
+    this.answerToggleBtn.setAttribute('aria-pressed', String(on));
+    this.answerToggleBtn.innerHTML = `${ICON_CHECK}<span>答え合わせ: ${on ? 'ON' : 'OFF'}</span>`;
   }
 
   // =========================================================================
@@ -847,7 +929,7 @@ export class VersusScreen {
     // 評価値表示が ON でプレイヤー手番なら評価オーバーレイ、それ以外は null。
     const evals =
       this.showEvals && this.currentEvals && !this.busy ? this.currentEvals : null;
-    this.boardView.render(board, legal, evals);
+    this.boardView.render(board, legal, evals, this.answerCell);
     this.updateStatus();
   }
 
@@ -927,6 +1009,34 @@ export class VersusScreen {
     this.passTimer = window.setTimeout(() => {
       if (this.passOverlayEl) this.passOverlayEl.classList.remove('show');
     }, 1200);
+  }
+
+  /**
+   * 最善手を打てたときの「クリティカル風」火花エフェクトを着手マスに重ねる。
+   * 盤の再描画(render)はセル内部しか触らないので、盤ラッパ直下に絶対配置で重ねれば
+   * AI 応手の描画でも消えない。約0.7秒で自動除去。動作軽減設定時は出さない。
+   */
+  private showCritSpark(cell: number): void {
+    if (!this.boardWrapEl || !this.boardEl) return;
+    if (
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      return;
+    }
+    const cellEl = this.boardEl.querySelector(`.cell[data-cell="${cell}"]`);
+    if (!cellEl) return;
+    const cr = cellEl.getBoundingClientRect();
+    const wr = this.boardWrapEl.getBoundingClientRect();
+    const spark = document.createElement('div');
+    spark.className = 'crit-spark';
+    spark.style.left = `${cr.left - wr.left + cr.width / 2}px`;
+    spark.style.top = `${cr.top - wr.top + cr.height / 2}px`;
+    spark.innerHTML =
+      '<span class="crit-flash"></span>' +
+      Array.from({ length: 8 }, (_, i) => `<i class="crit-shard" style="--a:${i * 45}deg"></i>`).join('');
+    this.boardWrapEl.appendChild(spark);
+    window.setTimeout(() => spark.remove(), 700);
   }
 
   private confirmQuit(): void {

@@ -26,6 +26,10 @@ export const ICON_EVAL =
   `<svg ${ICON_ATTRS}><path d="M9 18h6"/><path d="M10 21h4"/>` +
   `<path d="M7 11a5 5 0 1 1 10 0c0 2-1.5 3-2 4.5h-6C8.5 14 7 13 7 11z"/></svg>`;
 
+/** 答え合わせトグル: ti-circle-check 相当(丸+チェック=正解確認)。 */
+export const ICON_CHECK =
+  `<svg ${ICON_ATTRS}><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-4.5"/></svg>`;
+
 /** 対局モード: ti-swords 相当(交差する剣)。 */
 export const ICON_SWORDS =
   `<svg class="menu-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" ` +

@@ -91,8 +91,14 @@ export class BoardView {
    * @param board 現在の盤面
    * @param legalMoves 合法手のセル一覧(評価待ちでも先にハイライトできる)
    * @param evals 各合法手の評価値(未計算なら null)
+   * @param answerCell 「答え合わせ」で薄く示す最善手のマス(対局モード用 / 無ければ null)
    */
-  render(board: Board, legalMoves: number[], evals: MoveEval[] | null): void {
+  render(
+    board: Board,
+    legalMoves: number[],
+    evals: MoveEval[] | null,
+    answerCell: number | null = null,
+  ): void {
     const legalSet = new Set(legalMoves);
     const classes: Map<number, EvalClass> = evals ? classifyMoves(evals) : new Map();
     const evalByCell = new Map<number, MoveEval>();
@@ -124,6 +130,10 @@ export class BoardView {
       el.className = 'cell' + (blocked ? ' blocked' : '');
       el.textContent = '';
       el.removeAttribute('title');
+
+      // 答え合わせ: 最善手だったマスを薄く示す。空マスのときだけ(相手がそこに
+      // 打って石で埋まったら自然に消える / 石の上にリングが重ならない)。
+      if (cell === answerCell && v === EMPTY) el.classList.add('answer-hint');
 
       if (v === BLOCKED) continue;
 
