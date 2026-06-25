@@ -129,6 +129,8 @@ export class VersusScreen {
   private passOverlayEl: HTMLElement | null = null;
   private judgeTimer: number | null = null;
   private passTimer: number | null = null;
+  /** 答え合わせ ON 時、着手後に最善手マークを見せてから AI 手番へ移すまでの待ちタイマー。 */
+  private answerRevealTimer: number | null = null;
 
   constructor(container: HTMLElement, nav: VersusNav) {
     this.container = container;
@@ -142,6 +144,7 @@ export class VersusScreen {
     this.generation++;
     if (this.judgeTimer !== null) window.clearTimeout(this.judgeTimer);
     if (this.passTimer !== null) window.clearTimeout(this.passTimer);
+    if (this.answerRevealTimer !== null) window.clearTimeout(this.answerRevealTimer);
     this.client.dispose();
   }
 
@@ -402,6 +405,8 @@ export class VersusScreen {
    */
   private advance(): void {
     if (!this.game || !this.config) return;
+    // 手番が動くこのタイミングで答え合わせ表示は消す(着手後の1秒間だけ見せる方式)。
+    this.answerCell = null;
     const gen = this.generation;
 
     // パス自動処理(パスも 1 ply として数える)。
@@ -435,9 +440,6 @@ export class VersusScreen {
     if (turn === this.config.playerColor) {
       // プレイヤー手番。
       this.busy = false;
-      // 答え合わせ表示は「次に自分が打つまで」残す(AIが速い初級でも見られるように)。
-      // 消すのは handlePlayerClick(次の着手時)。空マスにしか出ないので、相手がそこに
-      // 打った場合は描画側で自然に消える。
       this.setBanner('あなたの番です', 'you');
       // 改善1: トグルの ON/OFF に関わらず、この手番の評価を裏で先読み(プリフェッチ)。
       // ON で即表示でき、採点にも流用する。
@@ -523,9 +525,6 @@ export class VersusScreen {
     const legalBefore = this.game.getLegalMoves();
     if (!legalBefore.includes(cell)) return;
 
-    // 新しい一手を打つので、前手の答え合わせ表示は消す。
-    this.answerCell = null;
-
     const gen = this.generation;
     const board = this.game.getBoard();
     const player = this.config.playerColor;
@@ -550,8 +549,20 @@ export class VersusScreen {
     this.pendingScore = this.scorePlayerMove(
       preBoard, player, variant, cell, plyIndex, legalCount, prefetched, gen,
     );
-    // すぐ次の手番へ(AI なら思考演出+応手がここから始まる)。
-    this.advance();
+    // 答え合わせ ON のとき(かつ採点対象の手): 着手結果(最善手マーク/火花)を
+    // 約1秒見せてから AI 手番へ移す。演出中はクリックを無効化する。
+    if (this.showAnswer && legalCount >= 2 && plyIndex >= 1) {
+      this.busy = true;
+      if (this.answerRevealTimer !== null) window.clearTimeout(this.answerRevealTimer);
+      this.answerRevealTimer = window.setTimeout(() => {
+        this.answerRevealTimer = null;
+        if (gen !== this.generation) return; // 破棄/やり直し/もう1戦で世代が進んだら無視。
+        this.advance();
+      }, 1000);
+    } else {
+      // 通常はすぐ次の手番へ(AI なら思考演出+応手がここから始まる)。
+      this.advance();
+    }
   }
 
   /**
@@ -1008,13 +1019,14 @@ export class VersusScreen {
     this.passOverlayEl.classList.add('show');
     this.passTimer = window.setTimeout(() => {
       if (this.passOverlayEl) this.passOverlayEl.classList.remove('show');
-    }, 1200);
+    }, 1900);
   }
 
   /**
    * 最善手を打てたときの「クリティカル風」火花エフェクトを着手マスに重ねる。
    * 盤の再描画(render)はセル内部しか触らないので、盤ラッパ直下に絶対配置で重ねれば
-   * AI 応手の描画でも消えない。約0.7秒で自動除去。動作軽減設定時は出さない。
+   * AI 応手の描画でも消えない。約1.1秒で自動除去。動作軽減設定時は出さない。
+   * 演出は石の外周から放射させる(白石の上に小さく出ると見えにくいため)。
    */
   private showCritSpark(cell: number): void {
     if (!this.boardWrapEl || !this.boardEl) return;
@@ -1031,12 +1043,15 @@ export class VersusScreen {
     const spark = document.createElement('div');
     spark.className = 'crit-spark';
     spark.style.left = `${cr.left - wr.left + cr.width / 2}px`;
+    // 1マスの大きさに合わせて演出をスケール(盤サイズが変わっても比率を保つ)。
+    spark.style.setProperty('--cell', `${cr.width}px`);
     spark.style.top = `${cr.top - wr.top + cr.height / 2}px`;
     spark.innerHTML =
+      '<span class="crit-ring"></span>' +
       '<span class="crit-flash"></span>' +
-      Array.from({ length: 8 }, (_, i) => `<i class="crit-shard" style="--a:${i * 45}deg"></i>`).join('');
+      Array.from({ length: 12 }, (_, i) => `<i class="crit-shard" style="--a:${i * 30}deg"></i>`).join('');
     this.boardWrapEl.appendChild(spark);
-    window.setTimeout(() => spark.remove(), 700);
+    window.setTimeout(() => spark.remove(), 1150);
   }
 
   private confirmQuit(): void {
