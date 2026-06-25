@@ -20,7 +20,7 @@ import {
   blockedMaskFor,
 } from '../engine/types';
 import type { MoveEval } from '../engine/search';
-import { classifyMoves, formatEvalValue, type EvalClass } from './evalColor';
+import { classifyMoves, formatEvalValue, MIDGAME_DISPLAY_SCALE, type EvalClass } from './evalColor';
 
 /**
  * 複数枚返るときのスタガー(順次)間隔(ms)と上限枚数。
@@ -34,6 +34,8 @@ export class BoardView {
   private cells: HTMLElement[] = [];
   private onCellClick: (cell: number) => void;
   private blockedMask: ReadonlyArray<boolean>;
+  /** 現在の盤種(評価値の表示スケールを盤ごとに切り替えるため保持)。 */
+  private variant: VariantId;
   /**
    * 直前に描画した盤面(石の反転アニメ用の差分検出)。
    * null = まだ一度も描画していない / グリッドを作り直した直後(=初期描画は無アニメ)。
@@ -45,6 +47,7 @@ export class BoardView {
   constructor(root: HTMLElement, variant: VariantId, onCellClick: (cell: number) => void) {
     this.root = root;
     this.onCellClick = onCellClick;
+    this.variant = variant;
     this.blockedMask = blockedMaskFor(variant);
     this.reduceMotion =
       typeof window !== 'undefined' &&
@@ -55,6 +58,7 @@ export class BoardView {
 
   /** 盤面の種類を切り替えてグリッドを作り直す(欠けマスの位置が変わるため)。 */
   setVariant(variant: VariantId): void {
+    this.variant = variant;
     this.blockedMask = blockedMaskFor(variant);
     this.build();
   }
@@ -164,13 +168,16 @@ export class BoardView {
         if (ev) {
           const cls = classes.get(cell) ?? 'good';
           el.classList.add('eval-' + cls);
+          // 表示だけ盤ごとの表示スケールを掛けて「予測石差」の桁に揃える。
+          // (内部値 ev.value は色分け・採点用にそのまま。終盤の確定値は無スケール)
+          const shown = ev.exact ? ev.value : ev.value * MIDGAME_DISPLAY_SCALE[this.variant];
           const label = document.createElement('span');
           label.className = 'eval-label';
-          label.textContent = formatEvalValue(ev.value, ev.exact);
+          label.textContent = formatEvalValue(shown, ev.exact);
           el.appendChild(label);
           el.title = ev.exact
             ? `確定最終石差 ${formatEvalValue(ev.value, true)}`
-            : `評価値(目安) ${formatEvalValue(ev.value, false)}`;
+            : `評価値(目安) ${formatEvalValue(shown, false)}`;
         } else {
           // 評価待ち: ハイライトのみ。
           el.classList.add('eval-pending');
