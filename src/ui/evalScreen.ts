@@ -91,7 +91,7 @@ export class EvalScreen {
     backBtn.addEventListener('click', () => this.onBack());
     const title = document.createElement('h1');
     title.className = 'app-title';
-    title.textContent = '評価値計算モード';
+    title.textContent = '評価値計算';
     topbar.appendChild(backBtn);
     topbar.appendChild(title);
 

@@ -714,18 +714,15 @@ html, body {
   flex-direction: column;
   gap: 12px;
 }
-.versus-topbar { grid-template-columns: auto 1fr; }
-.versus-topbar .btn-back { grid-column: 1; }
 .versus-info {
-  grid-column: 2;
-  justify-self: end;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   font-size: 13px;
   color: var(--text-dim);
   flex-wrap: wrap;
-  justify-content: flex-end;
+  margin-top: -4px;
 }
 .versus-info .vs-ai { color: var(--text); font-weight: 600; }
 .versus-info .vs-ai.berserker { color: var(--best-ring); font-weight: 700; }

@@ -146,7 +146,7 @@ export class VersusScreen {
     wrap.className = 'screen versus-setup';
 
     // 上部バー(戻る + タイトル)。
-    wrap.appendChild(this.buildTopbar('対局モード', () => this.nav.toMenu()));
+    wrap.appendChild(this.buildTopbar('対局設定', () => this.nav.toMenu()));
 
     // --- 盤面選択 ---
     const boardSection = document.createElement('section');
@@ -295,15 +295,22 @@ export class VersusScreen {
     const wrap = document.createElement('div');
     wrap.className = 'screen versus-game';
 
-    // 上部バー(投了=メニューへ + 対局情報)。
+    // 上部バー(やめる + タイトル)。
     const lv = aiLevelById(this.config.aiLevel);
     const topbar = document.createElement('div');
-    topbar.className = 'screen-topbar versus-topbar';
+    topbar.className = 'screen-topbar';
     const backBtn = document.createElement('button');
     backBtn.className = 'ctrl-btn btn-back';
     backBtn.type = 'button';
     backBtn.innerHTML = `${ICON_BACK}<span>やめる</span>`;
     backBtn.addEventListener('click', () => this.confirmQuit());
+    const title = document.createElement('h1');
+    title.className = 'app-title';
+    title.textContent = 'AI対局';
+    topbar.appendChild(backBtn);
+    topbar.appendChild(title);
+
+    // 対局情報(盤面・AI 強さ・自分の色)を上部バーの下に 1 行で。
     const info = document.createElement('div');
     info.className = 'versus-info';
     const youLabel = this.config.playerColor === BLACK ? '黒' : '白';
@@ -313,8 +320,6 @@ export class VersusScreen {
       `<span class="vs-ai${lv.special ? ' berserker' : ''}">${lv.label}</span>` +
       `<span class="vs-sep">·</span>` +
       `<span class="vs-you">あなた: <span class="disc ${this.config.playerColor === BLACK ? 'black' : 'white'}"></span>${youLabel}</span>`;
-    topbar.appendChild(backBtn);
-    topbar.appendChild(info);
 
     // 手番バナー(あなたの番 / AI思考中…)。
     this.turnBannerEl = document.createElement('div');
@@ -354,6 +359,7 @@ export class VersusScreen {
     this.toastEl.className = 'toast hidden';
 
     wrap.appendChild(topbar);
+    wrap.appendChild(info);
     wrap.appendChild(this.turnBannerEl);
     wrap.appendChild(this.statusEl);
     wrap.appendChild(this.boardEl);
