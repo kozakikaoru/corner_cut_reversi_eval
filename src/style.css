@@ -466,6 +466,64 @@ html, body {
   display: none;
 }
 
+/* パス通知: 盤面中央に一瞬だけ重ねて出すカード(対局モード) */
+.board-wrap {
+  position: relative;
+}
+.pass-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none; /* 盤面のクリックを妨げない */
+  opacity: 0;
+  transition: opacity 200ms ease;
+  z-index: 6;
+}
+.pass-overlay.show {
+  opacity: 1;
+}
+.pass-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 18px 34px;
+  border-radius: 16px;
+  background: rgba(10, 16, 20, 0.86);
+  border: 1px solid rgba(95, 210, 192, 0.35);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  transform: scale(0.86);
+  transition: transform 220ms cubic-bezier(0.18, 0.9, 0.32, 1.2);
+}
+.pass-overlay.show .pass-card {
+  transform: scale(1);
+}
+.pass-card .pass-who {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.pass-card .pass-label {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  line-height: 1.1;
+  color: var(--accent);
+}
+.pass-card .pass-note {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pass-overlay,
+  .pass-card {
+    transition: none;
+  }
+}
+
 /* ================================================================== *
  * フェーズ3: メニュー / 対局モード(設定・対局・結果)
  * 既存トークン(案B ネオンダーク)をそのまま使う。発光は使わない方針も踏襲。

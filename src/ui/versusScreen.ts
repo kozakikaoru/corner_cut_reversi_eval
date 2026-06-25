@@ -118,8 +118,10 @@ export class VersusScreen {
   private turnBannerEl: HTMLElement | null = null;
   private judgeEl: HTMLElement | null = null;
   private evalToggleBtn: HTMLButtonElement | null = null;
-  private toastEl: HTMLElement | null = null;
+  /** パス通知を盤面中央に重ねて出すオーバーレイ。 */
+  private passOverlayEl: HTMLElement | null = null;
   private judgeTimer: number | null = null;
+  private passTimer: number | null = null;
 
   constructor(container: HTMLElement, nav: VersusNav) {
     this.container = container;
@@ -132,6 +134,7 @@ export class VersusScreen {
   dispose(): void {
     this.generation++;
     if (this.judgeTimer !== null) window.clearTimeout(this.judgeTimer);
+    if (this.passTimer !== null) window.clearTimeout(this.passTimer);
     this.client.dispose();
   }
 
@@ -329,8 +332,14 @@ export class VersusScreen {
     this.statusEl = document.createElement('div');
     this.statusEl.className = 'status';
 
-    // 盤面。
+    // 盤面(+ パス通知オーバーレイ)。盤の中央に重ねるため相対配置のラッパで包む。
+    const boardWrap = document.createElement('div');
+    boardWrap.className = 'board-wrap';
     this.boardEl = document.createElement('div');
+    this.passOverlayEl = document.createElement('div');
+    this.passOverlayEl.className = 'pass-overlay';
+    boardWrap.appendChild(this.boardEl);
+    boardWrap.appendChild(this.passOverlayEl);
 
     // 着手判定フィードバック(Perfect/Good/Bad)。レイアウトシフト防止に高さ固定。
     this.judgeEl = document.createElement('div');
@@ -354,18 +363,13 @@ export class VersusScreen {
     restartBtn.addEventListener('click', () => this.restartGame());
     controls.appendChild(restartBtn);
 
-    // トースト(パス・終局通知)。
-    this.toastEl = document.createElement('div');
-    this.toastEl.className = 'toast hidden';
-
     wrap.appendChild(topbar);
     wrap.appendChild(info);
     wrap.appendChild(this.turnBannerEl);
     wrap.appendChild(this.statusEl);
-    wrap.appendChild(this.boardEl);
+    wrap.appendChild(boardWrap);
     wrap.appendChild(this.judgeEl);
     wrap.appendChild(controls);
-    wrap.appendChild(this.toastEl);
     this.container.appendChild(wrap);
 
     this.boardView = new BoardView(this.boardEl, this.config.variant, (cell) =>
@@ -387,7 +391,7 @@ export class VersusScreen {
     if (pass) {
       this.plyCount++;
       const who = pass.passedPlayer === this.config.playerColor ? 'あなた' : 'AI';
-      this.showToast(`${who} は打てる手がないためパスしました ⏭️`);
+      this.showPassOverlay(who);
     }
 
     // 終局。
@@ -832,9 +836,14 @@ export class VersusScreen {
   // =========================================================================
 
   private draw(): void {
-    if (!this.game || !this.boardView) return;
+    if (!this.game || !this.boardView || !this.config) return;
     const board = this.game.getBoard();
-    const legal = this.game.getLegalMoves();
+    // 合法手ハイライト(置けるマス)はプレイヤー手番のときだけ出す。
+    // AI 手番に AI の着手候補を見せても意味がなく、むしろ次の一手のヒントを
+    // 探す妨げになるため出さない。
+    const isPlayerTurn =
+      !this.game.isOver() && this.game.getCurrentPlayer() === this.config.playerColor;
+    const legal = isPlayerTurn ? this.game.getLegalMoves() : [];
     // 評価値表示が ON でプレイヤー手番なら評価オーバーレイ、それ以外は null。
     const evals =
       this.showEvals && this.currentEvals && !this.busy ? this.currentEvals : null;
@@ -897,15 +906,27 @@ export class VersusScreen {
     }, 1800);
   }
 
-  private showToast(message: string, sticky = false): void {
-    if (!this.toastEl) return;
-    this.toastEl.textContent = message;
-    this.toastEl.classList.remove('hidden');
-    if (!sticky) window.setTimeout(() => this.hideToast(), 2600);
-  }
-
-  private hideToast(): void {
-    if (this.toastEl) this.toastEl.classList.add('hidden');
+  /**
+   * パス通知を盤面中央に一瞬だけ重ねて表示する。
+   * 「あなた」/「AI」が打てる手がなくパスしたことを盤上のカードでさっと知らせる
+   * (盤外トーストより視認しやすく、対局の流れを止めない)。連続パスでも再アニメする。
+   */
+  private showPassOverlay(who: string): void {
+    if (!this.passOverlayEl) return;
+    if (this.passTimer !== null) window.clearTimeout(this.passTimer);
+    this.passOverlayEl.innerHTML =
+      `<div class="pass-card">` +
+      `<span class="pass-who">${who}</span>` +
+      `<span class="pass-label">パス</span>` +
+      `<span class="pass-note">打てる手がありません</span>` +
+      `</div>`;
+    // いったん消してリフローを挟み、再度 show して必ずアニメを再生する。
+    this.passOverlayEl.classList.remove('show');
+    void this.passOverlayEl.offsetWidth;
+    this.passOverlayEl.classList.add('show');
+    this.passTimer = window.setTimeout(() => {
+      if (this.passOverlayEl) this.passOverlayEl.classList.remove('show');
+    }, 1200);
   }
 
   private confirmQuit(): void {

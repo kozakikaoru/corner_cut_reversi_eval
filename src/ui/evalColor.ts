@@ -21,7 +21,9 @@ export type EvalClass = 'best' | 'good' | 'bad';
 
 /**
  * 各手に色クラスを割り当てる。
- * best は最大値の手(複数あれば最初の1つを best、同値の他手は good 扱い)。
+ * best は最大評価値の手。同値(=どれを打っても最善)の手が複数あれば、その全部を best
+ * として強調する(同点最善を1つだけ特別扱いすると、対等な手が劣って見えるため)。
+ * それ以外は最善との差で good / bad。
  */
 export function classifyMoves(moves: MoveEval[]): Map<number, EvalClass> {
   const result = new Map<number, EvalClass>();
@@ -31,13 +33,9 @@ export function classifyMoves(moves: MoveEval[]): Map<number, EvalClass> {
   let bestValue = -Infinity;
   for (const m of moves) if (m.value > bestValue) bestValue = m.value;
 
-  let bestAssigned = false;
-  // value 降順に見て、最初の最大値の手だけ best にする。
-  const sorted = [...moves].sort((a, b) => b.value - a.value);
-  for (const m of sorted) {
-    if (!bestAssigned && m.value === bestValue) {
-      result.set(m.cell, 'best');
-      bestAssigned = true;
+  for (const m of moves) {
+    if (m.value === bestValue) {
+      result.set(m.cell, 'best'); // 同点最善はすべて強調。
       continue;
     }
     const diff = bestValue - m.value;
