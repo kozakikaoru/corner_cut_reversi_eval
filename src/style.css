@@ -1024,6 +1024,19 @@ html, body {
   font-weight: 700;
 }
 .result-score .disc { width: 18px; height: 18px; }
+
+/* 結果画面の最終盤面(読み取り専用)。大きすぎないよう中央に控えめに置く。 */
+.result-board {
+  width: 100%;
+  max-width: 300px;
+  margin: 0 auto;
+}
+.result-board-label {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
 .result-score .rs-you,
 .result-score .rs-ai { display: inline-flex; align-items: center; gap: 8px; }
 .result-score .rs-sep { opacity: 0.5; }

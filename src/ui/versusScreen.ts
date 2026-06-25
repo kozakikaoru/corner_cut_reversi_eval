@@ -830,6 +830,16 @@ export class VersusScreen {
       </div>
     `;
 
+    // 最終盤面(読み取り専用)。対局終了後も結果と一緒に盤面を振り返れるように。
+    const boardSection = document.createElement('div');
+    boardSection.className = 'result-board';
+    const boardLabel = document.createElement('div');
+    boardLabel.className = 'result-board-label';
+    boardLabel.textContent = '最終盤面';
+    const finalBoardEl = document.createElement('div');
+    boardSection.appendChild(boardLabel);
+    boardSection.appendChild(finalBoardEl);
+
     // プレイ採点カード。
     const scoreCard = this.buildScoreCard(play);
 
@@ -847,9 +857,14 @@ export class VersusScreen {
     );
 
     wrap.appendChild(header);
+    wrap.appendChild(boardSection);
     wrap.appendChild(scoreCard);
     wrap.appendChild(actions);
     this.container.appendChild(wrap);
+
+    // 最終局面を静止表示(合法手・評価なし=非インタラクティブ)。
+    const finalView = new BoardView(finalBoardEl, this.config.variant, () => {});
+    finalView.render(this.game.getBoard(), [], null);
   }
 
   /** 「あなたのプレイ評価」カードを組み立てる。 */
