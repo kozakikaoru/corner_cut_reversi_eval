@@ -18,9 +18,9 @@
 
 ## 画面イメージ
 
-| メニュー | 対局設定 | AI対局 | 評価値計算 |
-|---|---|---|---|
-| ![](./docs/images/01-menu.png) | ![](./docs/images/02-versus-setup.png) | ![](./docs/images/03-game.png) | ![](./docs/images/04-eval.png) |
+| メニュー | 対局設定 | AI対局 | 評価値計算 | 盤面編集 |
+|---|---|---|---|---|
+| ![](./docs/images/01-menu.png) | ![](./docs/images/02-versus-setup.png) | ![](./docs/images/03-game.png) | ![](./docs/images/04-eval.png) | ![](./docs/images/05-edit.png) |
 
 ---
 
