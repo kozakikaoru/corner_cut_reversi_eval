@@ -491,6 +491,67 @@ html, body {
   display: none;
 }
 
+/* ---- 盤面編集モード(評価値計算) ---- */
+
+/* 表示の出し分け(通常コントロール ⇄ 編集パネル) */
+.controls.hidden,
+.edit-panel.hidden {
+  display: none;
+}
+
+.edit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.edit-hint {
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+/* 編集中の盤: 欠けマス以外はどこでも置けるのでカーソルと薄いホバーで示す */
+.board.editing .cell:not(.blocked) {
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .board.editing .cell:not(.blocked):hover {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+}
+
+/* 編集中はツールバー(盤面/先手)をロック */
+.seg-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 完了: アクセントで主役ボタンとして強調 */
+.ctrl-btn.btn-done {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #04201b;
+}
+@media (hover: hover) {
+  .ctrl-btn.btn-done:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #04201b;
+    filter: brightness(1.08);
+  }
+}
+
+/* 全消し: 破壊的操作なのでホバーで警告色(リセットと同様) */
+@media (hover: hover) {
+  .ctrl-btn.btn-clear:hover:not(:disabled) {
+    border-color: var(--bad-ring);
+    color: #ffd9d4;
+    background: rgba(194, 97, 90, 0.10);
+  }
+}
+
 /* パス通知: 盤面中央に一瞬だけ重ねて出すカード(対局モード) */
 .board-wrap {
   position: relative;

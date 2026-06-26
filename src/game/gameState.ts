@@ -112,6 +112,17 @@ export class GameState {
     return { passedPlayer: passed };
   }
 
+  /**
+   * 任意の盤面・手番から再開する(盤面編集モード用)。
+   * 盤面はコピーして保持し(呼び出し側の編集バッファと分離)、履歴はクリアする
+   * (編集後の局面が新たな起点になり、そこより前へは戻せない)。
+   */
+  loadPosition(board: Board, current: Player): void {
+    this.board = cloneBoard(board);
+    this.current = current;
+    this.history = [];
+  }
+
   /** 1手戻る(待った)。戻せたら true。 */
   undo(): boolean {
     const prev = this.history.pop();

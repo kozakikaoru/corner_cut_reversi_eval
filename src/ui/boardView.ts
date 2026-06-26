@@ -37,6 +37,12 @@ export class BoardView {
   /** 現在の盤種(評価値の表示スケールを盤ごとに切り替えるため保持)。 */
   private variant: VariantId;
   /**
+   * 編集モード(評価値計算の盤面編集)。
+   * true の間は合法手判定を無視し、欠けマス以外のどのセルもクリックできる
+   * (石の自由配置)。差分アニメも止める(連続ペイントを軽快に保つ)。
+   */
+  private editing = false;
+  /**
    * 直前に描画した盤面(石の反転アニメ用の差分検出)。
    * null = まだ一度も描画していない / グリッドを作り直した直後(=初期描画は無アニメ)。
    */
@@ -63,6 +69,16 @@ export class BoardView {
     this.build();
   }
 
+  /**
+   * 編集モードの ON/OFF。ON にすると欠けマス以外を自由にクリックできる。
+   * モードを切り替えた直後の描画はアニメさせない(差分の基準をリセット)。
+   */
+  setEditing(on: boolean): void {
+    this.editing = on;
+    this.root.classList.toggle('editing', on);
+    this.prevBoard = null;
+  }
+
   private build(): void {
     this.root.innerHTML = '';
     this.root.classList.add('board');
@@ -84,7 +100,13 @@ export class BoardView {
   }
 
   private handleClick(cell: number): void {
-    // 合法手のみ反応(legal クラスが付いているセル)。
+    // 編集モードでは合法手判定を無視(クリックリスナは欠けマス以外にだけ付くので、
+    // ここに来る時点で対象は配置可能なセル)。
+    if (this.editing) {
+      this.onCellClick(cell);
+      return;
+    }
+    // 通常時は合法手のみ反応(legal クラスが付いているセル)。
     if (this.cells[cell].classList.contains('legal')) {
       this.onCellClick(cell);
     }
@@ -111,7 +133,7 @@ export class BoardView {
     // 改善2: 前回盤面との差分から「反転した石」「新たに置かれた石」を割り出し、
     // それらにだけ控えめなアニメを当てる(全石の再描画でアニメが暴発しないように)。
     const prev = this.prevBoard;
-    const animate = prev !== null && !this.reduceMotion;
+    const animate = prev !== null && !this.reduceMotion && !this.editing;
     // 反転枚数に応じたスタガー用に、反転セルへ 0,1,2,... の順番を割り当てる。
     const flipOrder = new Map<number, number>();
     if (animate && prev) {

@@ -30,6 +30,10 @@ export const ICON_EVAL =
 export const ICON_CHECK =
   `<svg ${ICON_ATTRS}><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-4.5"/></svg>`;
 
+/** 盤面編集: ti-pencil 相当(鉛筆=自由配置)。 */
+export const ICON_EDIT =
+  `<svg ${ICON_ATTRS}><path d="M4 20h4L18.5 9.5a2.83 2.83 0 0 0-4-4L4 16v4"/><path d="m13.5 6.5 4 4"/></svg>`;
+
 /** 対局モード: ti-swords 相当(交差する剣)。 */
 export const ICON_SWORDS =
   `<svg class="menu-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" ` +

@@ -11,19 +11,24 @@
  */
 
 import {
+  type Board,
+  type Cell,
   type Player,
   type VariantId,
   BLACK,
   WHITE,
+  EMPTY,
+  BLOCKED,
   VARIANT_ORDER,
   BOARD_VARIANTS,
   DEFAULT_VARIANT,
   playableCellsFor,
 } from '../engine/types';
+import { createEmptyBoard, cloneBoard, countDiscs } from '../engine/board';
 import { GameState } from '../game/gameState';
 import { BoardView } from './boardView';
 import { EvalClient } from '../worker/evalClient';
-import { ICON_UNDO, ICON_RESET, ICON_BACK } from './icons';
+import { ICON_UNDO, ICON_RESET, ICON_BACK, ICON_EDIT, ICON_CHECK } from './icons';
 import type { MoveEval } from '../engine/search';
 
 export class EvalScreen {
@@ -43,12 +48,28 @@ export class EvalScreen {
   /** 現在評価中の手の結果(描画用キャッシュ)。 */
   private currentEvals: MoveEval[] | null = null;
 
+  // 盤面編集モードの状態。
+  /** 編集中かどうか(true の間は通常の評価表示を止め、自由配置を受け付ける)。 */
+  private editing = false;
+  /** 編集用の作業盤面(確定するまで game には反映しない)。 */
+  private editBoard: Board | null = null;
+  /** 配置するブラシ(黒石 / 白石 / 消す=EMPTY)。 */
+  private brush: Cell = BLACK;
+  /** 編集後の局面で手番にする色。 */
+  private editTurn: Player = BLACK;
+
   // 画面要素の参照。
   private boardEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
   private toastEl: HTMLElement | null = null;
   private variantBtns = new Map<VariantId, HTMLButtonElement>();
   private colorBtns = new Map<Player, HTMLButtonElement>();
+  private brushBtns = new Map<Cell, HTMLButtonElement>();
+  private turnBtns = new Map<Player, HTMLButtonElement>();
+  /** 通常のコントロール群(1手戻る/リセット/編集)。編集中は隠す。 */
+  private normalControlsEl: HTMLElement | null = null;
+  /** 編集パネル(ブラシ/手番/全消し・キャンセル・完了)。通常時は隠す。 */
+  private editPanelEl: HTMLElement | null = null;
 
   constructor(container: HTMLElement, onBack: () => void) {
     this.container = container;
@@ -77,6 +98,8 @@ export class EvalScreen {
     this.container.innerHTML = '';
     this.variantBtns.clear();
     this.colorBtns.clear();
+    this.brushBtns.clear();
+    this.turnBtns.clear();
 
     const wrap = document.createElement('div');
     wrap.className = 'screen board-screen';
@@ -114,6 +137,13 @@ export class EvalScreen {
     controls.appendChild(
       this.makeButton(`${ICON_RESET}<span>リセット</span>`, 'btn-reset', () => this.handleReset()),
     );
+    controls.appendChild(
+      this.makeButton(`${ICON_EDIT}<span>盤面編集</span>`, 'btn-edit', () => this.enterEditMode()),
+    );
+    this.normalControlsEl = controls;
+
+    // 盤面編集パネル(通常時は隠す)。
+    this.editPanelEl = this.buildEditPanel();
 
     // トースト(パス通知・終局通知)。
     this.toastEl = document.createElement('div');
@@ -124,6 +154,7 @@ export class EvalScreen {
     wrap.appendChild(this.statusEl);
     wrap.appendChild(this.boardEl);
     wrap.appendChild(controls);
+    wrap.appendChild(this.editPanelEl);
     wrap.appendChild(this.toastEl);
     this.container.appendChild(wrap);
 
@@ -212,6 +243,100 @@ export class EvalScreen {
     return b;
   }
 
+  /** 盤面編集パネル(ブラシ選択 + 手番選択 + 全消し/キャンセル/完了)を組み立てる。 */
+  private buildEditPanel(): HTMLElement {
+    const panel = document.createElement('div');
+    panel.className = 'edit-panel hidden';
+
+    const hint = document.createElement('div');
+    hint.className = 'edit-hint';
+    hint.textContent = 'マスをタップして石を自由に配置 → 「完了」で評価値を計算';
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'toolbar';
+
+    // --- 配置する石(ブラシ)---
+    const brushGroup = document.createElement('div');
+    brushGroup.className = 'toolbar-group';
+    const brushLabel = document.createElement('span');
+    brushLabel.className = 'toolbar-label';
+    brushLabel.textContent = '石';
+    brushGroup.appendChild(brushLabel);
+
+    const brushSeg = document.createElement('div');
+    brushSeg.className = 'segmented';
+    brushSeg.setAttribute('role', 'group');
+    brushSeg.setAttribute('aria-label', '配置する石');
+    const brushDefs: ReadonlyArray<[Cell, string]> = [
+      [BLACK, '黒'],
+      [WHITE, '白'],
+      [EMPTY, '消す'],
+    ];
+    for (const [val, label] of brushDefs) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      if (val === BLACK || val === WHITE) {
+        btn.className = 'seg-btn seg-color';
+        btn.innerHTML = `<span class="disc ${val === BLACK ? 'black' : 'white'}"></span>${label}`;
+      } else {
+        btn.className = 'seg-btn';
+        btn.textContent = label;
+      }
+      btn.addEventListener('click', () => this.setBrush(val));
+      this.brushBtns.set(val, btn);
+      brushSeg.appendChild(btn);
+    }
+    brushGroup.appendChild(brushSeg);
+
+    // --- 手番(編集後の局面で先に打つ色)---
+    const turnGroup = document.createElement('div');
+    turnGroup.className = 'toolbar-group';
+    const turnLabel = document.createElement('span');
+    turnLabel.className = 'toolbar-label';
+    turnLabel.textContent = '手番';
+    turnGroup.appendChild(turnLabel);
+
+    const turnSeg = document.createElement('div');
+    turnSeg.className = 'segmented';
+    turnSeg.setAttribute('role', 'group');
+    turnSeg.setAttribute('aria-label', '手番');
+    const turnDefs: ReadonlyArray<[Player, string]> = [
+      [BLACK, '黒'],
+      [WHITE, '白'],
+    ];
+    for (const [p, label] of turnDefs) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'seg-btn seg-color';
+      btn.innerHTML = `<span class="disc ${p === BLACK ? 'black' : 'white'}"></span>${label}`;
+      btn.addEventListener('click', () => this.setEditTurn(p));
+      this.turnBtns.set(p, btn);
+      turnSeg.appendChild(btn);
+    }
+    turnGroup.appendChild(turnSeg);
+
+    toolbar.appendChild(brushGroup);
+    toolbar.appendChild(turnGroup);
+
+    // --- アクション(全消し / キャンセル / 完了)---
+    const actions = document.createElement('div');
+    actions.className = 'controls';
+    actions.appendChild(
+      this.makeButton(`${ICON_RESET}<span>全消し</span>`, 'btn-clear', () => this.handleClearEdit()),
+    );
+    actions.appendChild(
+      this.makeButton(`<span>キャンセル</span>`, 'btn-cancel', () => this.cancelEdit()),
+    );
+    actions.appendChild(
+      this.makeButton(`${ICON_CHECK}<span>完了</span>`, 'btn-done', () => this.commitEdit()),
+    );
+
+    panel.appendChild(hint);
+    panel.appendChild(toolbar);
+    panel.appendChild(actions);
+    return panel;
+  }
+
   // ---- 設定変更ハンドラ -----------------------------------------------------
 
   private handleVariantChange(variant: VariantId): void {
@@ -285,6 +410,10 @@ export class EvalScreen {
   }
 
   private handleCellClick(cell: number): void {
+    if (this.editing) {
+      this.handleEditCellClick(cell);
+      return;
+    }
     if (!this.game) return;
     const moved = this.game.play(cell);
     if (!moved) return;
@@ -301,6 +430,124 @@ export class EvalScreen {
 
   private handleReset(): void {
     this.startGame();
+  }
+
+  // ---- 盤面編集モード -------------------------------------------------------
+
+  /** 編集モードに入る。今見ている局面を作業盤面の初期値にする。 */
+  private enterEditMode(): void {
+    if (!this.game || !this.boardView || this.editing) return;
+    // 進行中の評価を破棄して評価表示を止める。
+    this.reqId++;
+    this.currentEvals = null;
+    this.hideToast();
+
+    this.editing = true;
+    this.editBoard = cloneBoard(this.game.getBoard());
+    this.brush = BLACK;
+    this.editTurn = this.game.getCurrentPlayer();
+
+    this.boardView.setEditing(true);
+    this.setToolbarDisabled(true);
+    this.syncEditPanel();
+    this.showEditUI(true);
+    this.drawEdit();
+  }
+
+  /** 編集を破棄して元の局面に戻る。 */
+  private cancelEdit(): void {
+    this.exitEditMode();
+    this.refresh();
+  }
+
+  /** 編集を確定し、その盤面・手番から評価を再開する。 */
+  private commitEdit(): void {
+    if (!this.game || !this.editBoard) {
+      this.exitEditMode();
+      this.refresh();
+      return;
+    }
+    this.game.loadPosition(this.editBoard, this.editTurn);
+    this.exitEditMode();
+    this.refresh();
+  }
+
+  /** 編集モードの後片付け(UI を通常表示に戻す。盤面の確定はしない)。 */
+  private exitEditMode(): void {
+    this.editing = false;
+    this.editBoard = null;
+    this.boardView?.setEditing(false);
+    this.setToolbarDisabled(false);
+    this.showEditUI(false);
+  }
+
+  /** 編集中: マスをブラシの内容で塗る。 */
+  private handleEditCellClick(cell: number): void {
+    if (!this.editBoard) return;
+    if (this.editBoard[cell] === BLOCKED) return; // 欠けマスは触れない(保険)。
+    this.editBoard[cell] = this.brush;
+    this.drawEdit();
+  }
+
+  /** 編集中: 盤面を全消し(欠けマス以外を空に)。 */
+  private handleClearEdit(): void {
+    this.editBoard = createEmptyBoard(this.variant);
+    this.drawEdit();
+  }
+
+  private setBrush(brush: Cell): void {
+    this.brush = brush;
+    this.syncEditPanel();
+  }
+
+  private setEditTurn(player: Player): void {
+    this.editTurn = player;
+    this.syncEditPanel();
+  }
+
+  /** 編集パネルの選択状態(ブラシ・手番)をハイライトに反映。 */
+  private syncEditPanel(): void {
+    for (const [val, btn] of this.brushBtns) {
+      const active = val === this.brush;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', String(active));
+    }
+    for (const [player, btn] of this.turnBtns) {
+      const active = player === this.editTurn;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', String(active));
+    }
+  }
+
+  /** 通常コントロールと編集パネルの表示を切り替える。 */
+  private showEditUI(editing: boolean): void {
+    this.normalControlsEl?.classList.toggle('hidden', editing);
+    this.editPanelEl?.classList.toggle('hidden', !editing);
+  }
+
+  /** 編集中は設定ツールバー(盤面の種類 / 先手色)を操作不可にする。 */
+  private setToolbarDisabled(disabled: boolean): void {
+    for (const btn of this.variantBtns.values()) btn.disabled = disabled;
+    for (const btn of this.colorBtns.values()) btn.disabled = disabled;
+  }
+
+  /** 編集中の盤面を描画(評価表示なし)+ 石数を表示。 */
+  private drawEdit(): void {
+    if (!this.boardView || !this.editBoard) return;
+    this.boardView.render(this.editBoard, [], null);
+    this.updateEditStatus();
+  }
+
+  private updateEditStatus(): void {
+    if (!this.statusEl || !this.editBoard) return;
+    const { black, white } = countDiscs(this.editBoard);
+    this.statusEl.innerHTML = `
+      <div class="score">
+        <span class="score-item"><span class="disc black"></span> ${black}</span>
+        <span class="score-item"><span class="disc white"></span> ${white}</span>
+      </div>
+      <div class="turn"><strong>編集中</strong></div>
+    `;
   }
 
   // ---- 描画ヘルパ -----------------------------------------------------------
