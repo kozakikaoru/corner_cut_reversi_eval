@@ -20,7 +20,7 @@ import {
   blockedMaskFor,
 } from '../engine/types';
 import type { MoveEval } from '../engine/search';
-import { classifyMoves, formatEvalValue, MIDGAME_DISPLAY_SCALE, type EvalClass } from './evalColor';
+import { classifyMoves, formatEvalValue, midgameDisplayValue, type EvalClass } from './evalColor';
 
 /**
  * 複数枚返るときのスタガー(順次)間隔(ms)と上限枚数。
@@ -34,7 +34,7 @@ export class BoardView {
   private cells: HTMLElement[] = [];
   private onCellClick: (cell: number) => void;
   private blockedMask: ReadonlyArray<boolean>;
-  /** 現在の盤種(評価値の表示スケールを盤ごとに切り替えるため保持)。 */
+  /** 現在の盤種(評価値の表示クランプ上限=置けるマス数の判定などに使う)。 */
   private variant: VariantId;
   /**
    * 編集モード(評価値計算の盤面編集)。
@@ -190,9 +190,9 @@ export class BoardView {
         if (ev) {
           const cls = classes.get(cell) ?? 'good';
           el.classList.add('eval-' + cls);
-          // 表示だけ盤ごとの表示スケールを掛けて「予測石差」の桁に揃える。
+          // 表示だけ「石差の目安」に変換(÷7 + 盤の石数でクランプ)して桁を揃える。
           // (内部値 ev.value は色分け・採点用にそのまま。終盤の確定値は無スケール)
-          const shown = ev.exact ? ev.value : ev.value * MIDGAME_DISPLAY_SCALE[this.variant];
+          const shown = ev.exact ? ev.value : midgameDisplayValue(ev.value, this.variant);
           const label = document.createElement('span');
           label.className = 'eval-label';
           label.textContent = formatEvalValue(shown, ev.exact);

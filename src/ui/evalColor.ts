@@ -13,7 +13,7 @@
  */
 
 import type { MoveEval } from '../engine/search';
-import type { VariantId } from '../engine/types';
+import { type VariantId, playableCellsFor } from '../engine/types';
 
 /** 善手と判定する「最善との差」の上限(石差スケール)。これ以内なら good。 */
 export const GOOD_THRESHOLD = 2.0;
@@ -21,22 +21,33 @@ export const GOOD_THRESHOLD = 2.0;
 export type EvalClass = 'best' | 'good' | 'bad';
 
 /**
- * 中盤評価値の「表示専用」スケール(盤ごと)。
+ * 中盤評価値の「表示専用」変換。
  *
- * 中盤の内部値は search.ts の DISC_SCALE(=1/9)で正規化されており、色分け
- * (GOOD_THRESHOLD)・採点(平均ロス等)はこの内部値のまま安定して使う。
- * 一方で表示は、終盤の確定石差(無スケール)と桁を揃えたい。盤ごとに「生評価値が
- * 最終石差をどれだけ予測するか」を自己対局で実測し(scripts/.scale-cal.ts)、その係数を
- * 内部値(=生÷9)に掛けて「予測石差っぽい整数」で見せる。
- * ※ 中盤評価はあくまで推定(実測の相関 R≈0.2〜0.64、特にクロスは弱い)なので、
- *   桁を揃える目的の概算。色・採点には影響しない(表示だけ)。
+ * 中盤の内部値(MoveEval.value)は search.ts の DISC_SCALE(=1/9)で正規化されており、
+ * 色分け(GOOD_THRESHOLD)・採点(平均ロス等)はこの内部値のまま安定して使う。
+ * 表示は「おおよそ何石差で勝つか」の目安にしたいので、生評価値(= 内部値 ÷ DISC_SCALE)を
+ * 一律 MIDGAME_DISPLAY_DIVISOR で割って見せる(盤ごとの個別係数はやめ、シンプルに統一)。
+ *
+ * さらに「その盤で物理的にありえる石差(= 置けるマス数)」を超えないようクランプする。
+ * これで表示が 3 桁(±100 超)になってプレートからあふれるレイアウト崩れを防ぎ、
+ * 値そのものも「盤の石数を超えない現実的な勝ち差」に収まる。
+ * ※ 中盤評価はあくまで推定(実測の相関は弱め)なので、桁合わせ目的の概算。色・採点には不影響。
  */
-export const MIDGAME_DISPLAY_SCALE: Record<VariantId, number> = {
-  standard: 3,
-  cross: 1.5,
-  octagon: 3,
-  hollow: 4,
-};
+const MIDGAME_DISPLAY_DIVISOR = 7;
+/** 内部値 → 生評価値に戻す係数(= 1 / DISC_SCALE)。DISC_SCALE を変えたらここも合わせる。 */
+const DISC_SCALE_INV = 9;
+/** 内部値に掛けると「生評価値 ÷ DIVISOR」になる表示倍率。 */
+const MIDGAME_DISPLAY_FACTOR = DISC_SCALE_INV / MIDGAME_DISPLAY_DIVISOR;
+
+/**
+ * 中盤の内部評価値を「表示用の石差目安」に変換する。
+ * 生評価値 ÷ DIVISOR にしたうえで、その盤の置けるマス数で上下クランプする。
+ */
+export function midgameDisplayValue(internalValue: number, variant: VariantId): number {
+  const scaled = internalValue * MIDGAME_DISPLAY_FACTOR;
+  const bound = playableCellsFor(variant);
+  return Math.max(-bound, Math.min(bound, scaled));
+}
 
 /**
  * 各手に色クラスを割り当てる。
